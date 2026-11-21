@@ -1,0 +1,39 @@
+# 通配符证书片段（`*.<base>` + DNS-01）—— 不是可独立部署的配置。
+#
+# 用途：把 deploy/Caddyfile 里的 "通配 Host + on_demand" 换成一张通配符证书，
+# 好处是新租户（<slug>.<base>）上线不再依赖 ask 端点；自定义域名仍需按需签发。
+#
+# 前置条件（缺一不可）：
+#   1. 自定义构建：xcaddy build --with github.com/caddy-dns/<provider>
+#      stock Caddy 没有 DNS 插件，直接 validate 会报 "unknown module: dns.<provider>"。
+#   2. DNS：*.<base> 与 <base>（通配符不覆盖裸域）的 A/AAAA 指向本入口。
+#   3. CAA 允许所选 CA；DNS API 凭据放进环境变量（不要写进文件）。
+#   4. 若同时保留 on-demand（自定义域名），ask 端点仍是必需的，见 README。
+#
+# 用法：把下面这段替换进 deploy/Caddyfile 的站点地址与 tls 块，
+#       保留原文件的 request_body / SSE handle / header / log 指令。
+
+{
+	email {$CHIRON_ACME_EMAIL:ops@example.com}
+	# 通配符签发只走 DNS-01；这里没有 on_demand_tls，自定义域名请另开一个
+	# https:// 站点并配置 on_demand + ask（见 README）。
+}
+
+# 通配符站点：只匹配 <slug>.<base>，裸域要单独列出。
+*.{$CHIRON_TENANT_BASE:apps.example.com}, {$CHIRON_TENANT_BASE:apps.example.com} {
+	# 需要 DNS 提供商插件；把 cloudflare 换成你构建时加入的插件名，
+	# 凭据变量名按插件文档改（示例仅是常见写法）。
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+
+	# ↓↓↓ 以下与原 Caddyfile 的站点块保持一致（这里省略，避免两处漂移）：
+	#   request_body { max_size 70MB }
+	#   @sse path /api/v1/sessions/*/events + handle（flush_interval -1）
+	#   handle（encode + reverse_proxy + header_up Host/X-Forwarded-For/X-Forwarded-Proto）
+	#   header（HSTS 等安全头）
+	#   log（JSON access log）
+
+	respond "replace this file's site block with deploy/Caddyfile's directives" 503
+}

@@ -1,0 +1,81 @@
+name: Feature request
+description: Propose a capability, an API change, or a deployment improvement.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing: check docs/PRD.md for the current scope and the milestone table
+        (S0–S9). Multi-region scheduling, billing integration and a credential sentry are
+        known gaps — requests for them are still useful, but say what you actually need.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues for a similar request.
+          required: true
+        - label: I read the relevant section of docs/PRD.md or docs/API.md.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Tenant model / isolation / plans
+        - Agent runtime (tools, approvals, subagents, checkpoints, memory)
+        - Sandbox tiers / quotas
+        - Egress / network policy
+        - Platform API / provisioning / console
+        - Web workspace (web/)
+        - Media library
+        - Deploy / operations / observability
+        - Docs / developer experience
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what blocks you today? Describe the situation, not only the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Sketch the API, config, or behavior you have in mind. Include sample requests if it is an endpoint.
+      placeholder: |
+        POST /api/v1/... { ... }
+        Env: CHIRON_...
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, other designs, or upstream features that would remove the need.
+
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Does this touch a security or isolation boundary?
+      options:
+        - "No"
+        - Yes — tenant isolation
+        - Yes — sandbox / host access
+        - Yes — network / egress
+        - Yes — authentication / authorization
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Scale expectations, timeline, willingness to send a PR.

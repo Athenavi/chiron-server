@@ -1,0 +1,15 @@
+Chiron Server
+Copyright 2026 Chiron contributors
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+Third-party dependencies keep their own licenses:
+
+- Rust crates: see Cargo.toml / Cargo.lock (each crate ships its own license).
+- Front-end packages: see web/package.json and console/package.json
+  (and the corresponding package-lock.json files).
+
+"Chiron" is a project name used to describe the origin of this Work.
+No trademark rights are granted beyond reasonable and customary
+descriptive use (Apache-2.0, Section 6).

@@ -1,0 +1,164 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: chiron
+          POSTGRES_PASSWORD: chiron
+          POSTGRES_DB: chiron
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U chiron -d chiron"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://chiron:chiron@127.0.0.1:5432/chiron
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migration versions are unique and ordered
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          for directory in ("migrations", "migrations_control"):
+              versions = []
+              for path in sorted(pathlib.Path(directory).glob("*.sql")):
+                  prefix = path.name.split("_", 1)[0]
+                  if not prefix.isdigit():
+                      sys.exit(f"{path}: migration name must start with a numeric version")
+                  versions.append(int(prefix))
+              if len(versions) != len(set(versions)):
+                  sys.exit(f"{directory}: duplicate migration versions")
+              if versions != sorted(versions):
+                  sys.exit(f"{directory}: migration versions are not ordered")
+              print(f"{directory}: {len(versions)} migrations ok")
+          PY
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:i18n
+      - run: npm run build
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - run: npm run check:i18n
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: docker build -f deploy/server/Dockerfile -t chiron-server:ci .
+      - name: Build sandbox agent image
+        run: docker build -f deploy/agent/Dockerfile -t chiron-agent:ci deploy/agent
+
+  backup-drill:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: chiron
+          POSTGRES_PASSWORD: chiron
+          POSTGRES_DB: chiron
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U chiron -d chiron"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      PGPASSWORD: chiron
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL 16 client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - name: Seed a tenant database
+        run: |
+          psql -h 127.0.0.1 -U chiron -d chiron -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE drill_src' -c 'CREATE DATABASE drill_dst'
+          for f in migrations/*.sql; do
+            psql -h 127.0.0.1 -U chiron -d drill_src -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -h 127.0.0.1 -U chiron -d drill_src -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO users (id, tenant_id, email, name, password_hash)
+            VALUES ('00000000-0000-0000-0000-000000000001', 1, 'drill@example.com', 'drill', 'x');
+          INSERT INTO sessions (id, tenant_id, user_id, title)
+            VALUES ('00000000-0000-0000-0000-000000000002', 1,
+                    '00000000-0000-0000-0000-000000000001', 'drill');
+          INSERT INTO messages (id, session_id, role, content)
+            VALUES ('00000000-0000-0000-0000-000000000003',
+                    '00000000-0000-0000-0000-000000000002', 'user', '{"text":"hello"}');
+          INSERT INTO runs (id, session_id, status)
+            VALUES ('00000000-0000-0000-0000-000000000004',
+                    '00000000-0000-0000-0000-000000000002', 'completed');
+          INSERT INTO audit_logs (tenant_id, action, target)
+            VALUES (1, 'drill', 'backup-restore');
+          SQL
+      - name: Dump, restore and verify row checksums
+        env:
+          SOURCE_DSN: postgresql://chiron:chiron@127.0.0.1:5432/drill_src
+          TARGET_DSN: postgresql://chiron:chiron@127.0.0.1:5432/drill_dst
+        run: bash ./scripts/backup/restore-drill.sh

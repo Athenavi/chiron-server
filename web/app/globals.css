@@ -1,0 +1,669 @@
+/**
+ * Chiron 前台基础样式
+ *
+ * 设计分层：
+ * 1. `@heroui/styles` —— Tailwind v4、HeroUI 组件结构与默认主题变量（已自带 `@import "tailwindcss"`）；
+ * 2. 应用级令牌 `--app-*` —— 聊天壳专用，按 `[data-theme]` 分别给出 light / dark / ocean 三套；
+ * 3. `@theme inline` 别名 —— 把旧的 `bg-surface` / `text-primary` 等调用点接到 HeroUI 变量上；
+ * 4. base / components 层 —— 排版、滚动条、焦点环、markdown。
+ *
+ * 新增主题：只加 `[data-theme="名字"] { 变量覆盖 }`（见文件末尾 ocean 示例），
+ * 再在 `components/theme/theme-config.ts` 的 THEME_OPTIONS 里登记即可。
+ */
+
+@import '@heroui/styles';
+
+/* ────────────────────────────────────────────────────────────────────────
+   应用级令牌：与主题无关的部分
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --app-font-ui: ui-sans-serif, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
+  --app-font-code: ui-monospace, 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+
+  /* 聊天列宽：消息气泡与输入区共用的最大宽度 */
+  --app-chat-max-width: 48rem;
+
+  /* 内容区辅助色：72% 在浅色下对比偏低（11px 时间戳接近 4:1），提到 82% */
+  --app-subtle-fg: color-mix(in oklab, var(--muted) 82%, var(--background));
+  --app-border-strong: color-mix(in oklab, var(--border) 62%, var(--foreground) 16%);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   应用级令牌：light（默认）
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme='light'] {
+  /* 侧栏恒为深色，形成「深色壳 + 浅色内容区」的品牌观感 */
+  --app-sidebar-bg: #101217;
+  --app-sidebar-elevated: #171a21;
+  --app-sidebar-hover: #1e222b;
+  --app-sidebar-active: #262b36;
+  --app-sidebar-fg: #e8eaef;
+  --app-sidebar-muted: #8b93a7;
+  --app-sidebar-border: #22262f;
+
+  --app-bubble-user-bg: color-mix(in oklab, var(--accent) 14%, var(--surface));
+  --app-bubble-assistant-bg: var(--surface);
+  --app-code-bg: #14161c;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   应用级令牌：dark
+   ──────────────────────────────────────────────────────────────────────── */
+
+[data-theme='dark'] {
+  --app-sidebar-bg: #0b0c10;
+  --app-sidebar-elevated: #12141a;
+  --app-sidebar-hover: #191c23;
+  --app-sidebar-active: #22262f;
+  --app-sidebar-fg: #e8eaef;
+  --app-sidebar-muted: #9aa2b4;
+  --app-sidebar-border: #242832;
+
+  --app-bubble-user-bg: color-mix(in oklab, var(--accent) 24%, var(--surface));
+  --app-bubble-assistant-bg: var(--surface-secondary);
+  --app-code-bg: #0a0b0f;
+
+  --app-subtle-fg: color-mix(in oklab, var(--muted) 82%, var(--background));
+  --app-border-strong: color-mix(in oklab, var(--border) 55%, var(--foreground) 26%);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   应用级令牌：ocean（自定义主题示例）
+   ──────────────────────────────────────────────────────────────────────── */
+
+[data-theme='ocean'] {
+  color-scheme: light;
+
+  /* HeroUI 主题变量覆盖（只写需要改的，其余沿用 light 默认） */
+  --background: oklch(0.972 0.008 210);
+  --foreground: oklch(0.24 0.028 232);
+
+  --surface: oklch(0.996 0.003 210);
+  --surface-secondary: oklch(0.955 0.012 210);
+  --surface-tertiary: oklch(0.935 0.016 210);
+
+  --overlay: var(--surface);
+  --overlay-foreground: var(--foreground);
+
+  --muted: oklch(0.52 0.026 225);
+  --default: oklch(0.93 0.014 210);
+  --default-foreground: var(--foreground);
+
+  --field-background: var(--surface);
+  --field-foreground: var(--foreground);
+  --field-placeholder: var(--muted);
+
+  --border: oklch(0.89 0.016 210);
+  --separator: oklch(0.91 0.014 210);
+
+  --accent: oklch(0.52 0.115 215);
+  --accent-foreground: oklch(0.99 0 0);
+  --focus: var(--accent);
+  --link: var(--accent);
+  --backdrop: rgb(4 22 28 / 0.55);
+
+  /* 应用级令牌 */
+  --app-sidebar-bg: #06222b;
+  --app-sidebar-elevated: #0a2c37;
+  --app-sidebar-hover: #0e3743;
+  --app-sidebar-active: #14434f;
+  --app-sidebar-fg: #e4f4f7;
+  --app-sidebar-muted: #8fb4bd;
+  --app-sidebar-border: #12414d;
+
+  --app-bubble-user-bg: color-mix(in oklab, var(--accent) 16%, var(--surface));
+  --app-bubble-assistant-bg: var(--surface);
+  --app-code-bg: #071b22;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   Tailwind 令牌别名
+   HeroUI 已提供 bg-background / bg-surface / text-muted / border-border /
+   text-accent / bg-danger-soft 等；这里只补第一批页面仍在用的旧类名。
+   ──────────────────────────────────────────────────────────────────────── */
+
+@theme inline {
+  --font-sans: var(--app-font-ui);
+  --font-mono: var(--app-font-code);
+
+  /* 旧命名 → HeroUI 语义变量 */
+  --color-primary: var(--accent);
+  --color-primary-hover: var(--accent-hover);
+  --color-primary-foreground: var(--accent-foreground);
+  --color-primary-soft: var(--accent-soft);
+  --color-surface-muted: var(--surface-secondary);
+  --color-subtle: var(--app-subtle-fg);
+  --color-border-strong: var(--app-border-strong);
+  --color-ring: var(--focus);
+
+  /* 深色侧栏（聊天壳固定色，不随内容区主题翻转） */
+  --color-sidebar: var(--app-sidebar-bg);
+  --color-sidebar-elevated: var(--app-sidebar-elevated);
+  --color-sidebar-hover: var(--app-sidebar-hover);
+  --color-sidebar-active: var(--app-sidebar-active);
+  --color-sidebar-foreground: var(--app-sidebar-fg);
+  --color-sidebar-muted: var(--app-sidebar-muted);
+  --color-sidebar-border: var(--app-sidebar-border);
+
+  /* 聊天气泡 / 代码块（可直接 bg-[var(--app-bubble-user-bg)]，也可用这两个类） */
+  --color-bubble-user: var(--app-bubble-user-bg);
+  --color-bubble-assistant: var(--app-bubble-assistant-bg);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   基础样式
+   ──────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+    background-color: var(--background);
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--app-font-ui);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--app-font-code);
+    font-size: 0.92em;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--accent) 28%, transparent);
+  }
+
+  /* 键盘可达性：只在键盘导航时显示焦点环。
+     放在 base 层，HeroUI 组件（components 层）自带的 focus 样式会覆盖它。 */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  /* 细滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb, rgb(128 132 145 / 0.45)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb, rgb(128 132 145 / 0.35));
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(128 132 145 / 0.55);
+    background-clip: content-box;
+  }
+
+  button,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 整数数字等宽，避免用量 / 计数跳动 */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   组件级工具类
+   ──────────────────────────────────────────────────────────────────────── */
+
+@layer components {
+  /* 页面内容容器（列表 / 设置等常规页面） */
+  .content-shell {
+    width: 100%;
+    max-width: 72rem;
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+
+  /* 聊天列容器：气泡与输入区共用 --app-chat-max-width */
+  .chat-shell {
+    width: 100%;
+    max-width: var(--app-chat-max-width);
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+
+  @media (min-width: 768px) {
+    .content-shell,
+    .chat-shell {
+      padding-inline: 1.5rem;
+    }
+  }
+
+  /* 侧栏里的滚动条更暗 */
+  .scrollbar-sidebar {
+    scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar-thumb {
+    background-color: rgb(255 255 255 / 0.16);
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(255 255 255 / 0.26);
+  }
+
+  /* 聊天气泡底色 */
+  .bubble-user {
+    background-color: var(--app-bubble-user-bg);
+  }
+
+  .bubble-assistant {
+    background-color: var(--app-bubble-assistant-bg);
+  }
+
+  /* ── Markdown / 富文本（assistant 消息）────────────────────────────── */
+  .prose-chat {
+    color: var(--foreground);
+    font-size: 0.9375rem;
+    line-height: 1.72;
+    overflow-wrap: anywhere;
+  }
+
+  .prose-chat > * + * {
+    margin-top: 0.75em;
+  }
+
+  .prose-chat h1,
+  .prose-chat h2,
+  .prose-chat h3,
+  .prose-chat h4 {
+    margin-top: 1.25em;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+
+  .prose-chat h1 {
+    font-size: 1.375rem;
+  }
+
+  .prose-chat h2 {
+    font-size: 1.1875rem;
+  }
+
+  .prose-chat h3 {
+    font-size: 1.0625rem;
+  }
+
+  .prose-chat p {
+    margin: 0;
+  }
+
+  .prose-chat a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .prose-chat strong {
+    font-weight: 600;
+  }
+
+  .prose-chat ul,
+  .prose-chat ol {
+    padding-left: 1.35em;
+    margin: 0.5em 0;
+  }
+
+  .prose-chat ul {
+    list-style: disc;
+  }
+
+  .prose-chat ol {
+    list-style: decimal;
+  }
+
+  .prose-chat li + li {
+    margin-top: 0.25em;
+  }
+
+  .prose-chat li > p {
+    margin: 0;
+  }
+
+  .prose-chat blockquote {
+    margin: 0.75em 0;
+    padding: 0.25em 0 0.25em 0.9em;
+    border-left: 3px solid var(--app-border-strong);
+    color: var(--muted);
+  }
+
+  .prose-chat hr {
+    margin: 1.25em 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .prose-chat code:not(pre code) {
+    padding: 0.15em 0.4em;
+    border-radius: calc(var(--radius) * 0.35);
+    background-color: var(--surface-secondary);
+    border: 1px solid var(--border);
+    font-size: 0.86em;
+  }
+
+  .prose-chat pre {
+    margin: 0.75em 0;
+    padding: 0.85rem 1rem;
+    overflow-x: auto;
+    border-radius: calc(var(--radius) * 0.75);
+    background-color: var(--app-code-bg);
+    color: color-mix(in oklab, var(--snow, #ffffff) 88%, var(--accent));
+    border: 1px solid color-mix(in oklab, var(--app-code-bg) 84%, #ffffff);
+    font-size: 0.8125rem;
+    line-height: 1.65;
+  }
+
+  .prose-chat pre code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: inherit;
+  }
+
+  .prose-chat table {
+    width: 100%;
+    margin: 0.75em 0;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+
+  .prose-chat th,
+  .prose-chat td {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+
+  .prose-chat th {
+    background-color: var(--surface-secondary);
+    font-weight: 600;
+  }
+
+  .prose-chat img {
+    max-width: 100%;
+    border-radius: calc(var(--radius) * 0.75);
+  }
+
+  /* ── 对话显示偏好（DisplaySettings）────────────────────────────────── */
+  .chat-display {
+    --chat-max-width: 48rem;
+    --chat-font-size: 0.9375rem;
+    --chat-line-height: 1.72;
+    --chat-message-gap: 1.25rem;
+    --chat-bubble-px: 0.875rem;
+    --chat-bubble-py: 0.625rem;
+    --chat-list-py: 1.5rem;
+  }
+
+  .chat-display[data-density='compact'] {
+    --chat-bubble-px: 0.7rem;
+    --chat-bubble-py: 0.45rem;
+    --chat-list-py: 1rem;
+  }
+
+  .chat-display[data-density='comfortable'] {
+    --chat-bubble-px: 1rem;
+    --chat-bubble-py: 0.85rem;
+    --chat-list-py: 2rem;
+  }
+
+  .chat-display .chat-shell {
+    max-width: var(--chat-max-width);
+  }
+
+  .chat-messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--chat-message-gap);
+    padding-block: var(--chat-list-py);
+  }
+
+  .chat-bubble {
+    padding: var(--chat-bubble-py) var(--chat-bubble-px);
+  }
+
+  .chat-message-text {
+    font-size: var(--chat-font-size);
+    line-height: var(--chat-line-height);
+  }
+
+  .chat-display .prose-chat {
+    font-size: var(--chat-font-size);
+    line-height: var(--chat-line-height);
+  }
+
+  /* 键盘已占据底部安全区时，避免再叠一层留白 */
+  .chat-display[data-keyboard='true'] .chat-composer {
+    padding-bottom: 0.4rem;
+  }
+
+  /* ── 右侧消息锚点（钢琴键）────────────────────────────────────────── */
+  .piano-key {
+    width: var(--piano-width, 12px);
+    height: 4px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background-color: color-mix(in oklab, var(--muted) 62%, var(--background));
+    transform-origin: right center;
+    opacity: 0.5;
+    animation: piano-pulse 2.4s ease-in-out infinite;
+    transition:
+      background-color 150ms ease,
+      opacity 150ms ease;
+    pointer-events: auto;
+  }
+
+  .piano-key:hover,
+  .piano-key:focus-visible {
+    animation-play-state: paused;
+    opacity: 1;
+    background-color: var(--accent);
+  }
+
+  .piano-key-active {
+    animation-play-state: paused;
+    opacity: 1;
+    transform: scaleX(1.2);
+    background-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+
+  @keyframes piano-pulse {
+    0%,
+    100% {
+      transform: scaleX(0.65);
+      opacity: 0.38;
+    }
+    50% {
+      transform: scaleX(1);
+      opacity: 0.88;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .piano-key {
+      animation: none;
+      opacity: 0.72;
+    }
+  }
+
+  /* 流式输出光标 */
+  .stream-caret::after {
+    content: '';
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.12em;
+    background-color: var(--accent);
+    animation: caret-blink 1.1s steps(2, start) infinite;
+  }
+
+  @keyframes caret-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   桌面侧栏折叠（72px 图标 rail）
+   ──────────────────────────────────────────────────────────────────────── */
+
+/*
+ * 状态写在 `<html data-sidebar="collapsed|expanded">`：由 (app)/layout.tsx 的首屏脚本
+ * 在侧栏 DOM 之前写入，React 负责后续切换，所以整页刷新时首帧就是折叠后的宽度。
+ *
+ * 宽度统一走 `--app-sidebar-width`：侧栏自身宽度 + 主区 `md:ml-[var(--app-sidebar-width)]`
+ * 一起变，过渡只发生一次，页面内容 max-width 不受影响。
+ *
+ * 下面的选择器全部限定在 `#app-sidebar`（只有 ≥md 的常驻侧栏有），
+ * 移动端抽屉不匹配，因此抽屉永远保持完整内容。
+ * 这些规则不放进 @layer：需要覆盖 HeroUI / Tailwind utilities 里的 width、display。
+ */
+
+:root {
+  --app-sidebar-width: 280px;
+}
+
+html[data-sidebar='collapsed'] {
+  --app-sidebar-width: 72px;
+}
+
+#app-sidebar {
+  width: var(--app-sidebar-width);
+  transition: width 200ms ease;
+}
+
+/* 折叠后彻底移除：搜索框、会话列表、品牌字标、分组标题、用户区文字 */
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-expanded-only {
+  display: none;
+}
+
+/* 折叠后只做视觉隐藏：导航项的可访问名称仍然保留 */
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 导航项 / 图标按钮在 rail 里统一成 44px 方块并居中 */
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-nav-link,
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-icon-button,
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-icon-trigger {
+  width: 44px;
+  height: 44px;
+  margin-inline: auto;
+  padding-inline: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+/* rail 只有 72px：顶部品牌行收紧内边距 */
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-header {
+  gap: 0.25rem;
+  padding-inline: 0.5rem;
+}
+
+/* 44px 导航项让 rail 变高：矮视口下允许导航区自己滚动，不挤压用户区 */
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-nav {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* 折叠箭头二选一交给 CSS，避免首帧宽度已折叠、图标还指向「收起」 */
+#app-sidebar .sidebar-chevron-collapsed {
+  display: none;
+}
+
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-chevron-expanded {
+  display: none;
+}
+
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-chevron-collapsed {
+  display: block;
+}
+
+/* 只在 rail 里出现的元素（管理分组的分隔线） */
+.sidebar-rail-only {
+  display: none;
+}
+
+html[data-sidebar='collapsed'] #app-sidebar .sidebar-rail-only {
+  display: block;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   无障碍 / 动效
+   ──────────────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .stream-caret::after {
+    animation: none;
+  }
+}

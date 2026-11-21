@@ -1,0 +1,27 @@
+# 真实环境变量与密钥绝不进入构建上下文
+.env
+.env.*
+!.env.example
+!.env.team.example
+
+.git
+.github
+.idea
+.vscode
+.dev
+.dev-pg
+.tmp-pg
+
+target
+**/target
+web/node_modules
+web/.next
+console/node_modules
+console/.next
+
+*.dump
+*.dump.partial
+*.log
+*.pem
+*.key
+**/id_rsa

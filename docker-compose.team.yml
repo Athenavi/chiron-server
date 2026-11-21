@@ -1,0 +1,131 @@
+# 团队部署编排：chiron-server（API）+ PostgreSQL + Redis。
+#
+# 明确不含前端与反代：前端是独立站点，Caddy 反代见 deploy/Caddyfile（跑在宿主上，
+# 把域名转给 127.0.0.1:8088）。本文件只负责"服务端 + 依赖"。
+#
+# 用法（必须在仓库根目录，且显式传 --env-file，否则 ${POSTGRES_PASSWORD} 无值）：
+#   docker compose --env-file .env.team -f docker-compose.team.yml config   # 静态校验
+#   docker compose --env-file .env.team -f docker-compose.team.yml up -d --build
+#   docker compose --env-file .env.team -f docker-compose.team.yml logs -f server
+#
+# 两个"必须"：
+# 1. /var/run/docker.sock 必须挂：sandbox 容器和 /readyz 都走宿主 docker。
+# 2. /var/agent-data 必须**同路径**挂：服务端用宿主绝对路径 `docker run -v
+#    /var/agent-data/...:/workspace`，自己也要直接读写同一目录，路径换一处就变成两份数据。
+
+name: chiron-team
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    # 只在本 compose 网络内暴露，不发布到宿主端口（需要 psql 调试时临时加 ports）。
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chiron}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.team, see docs/deploy.md}
+      POSTGRES_DB: ${POSTGRES_DB:-chiron}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次初始化创建控制库；租户库由服务端开通流程创建。
+      - ./deploy/postgres/init-control.sql:/docker-entrypoint-initdb.d/10-control.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chiron} -d ${POSTGRES_DB:-chiron}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [backend]
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    # 租约、事件流（Streams）、限流、登录失败计数都在 Redis：开 AOF，
+    # 重启后不会把在跑的 run 租约和未消费事件一起丢掉。
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [backend]
+
+  server:
+    build:
+      context: .
+      dockerfile: deploy/server/Dockerfile
+    image: chiron-server:latest
+    restart: unless-stopped
+    # .env.team 提供 JWT_SECRET、服务模式、sandbox、provider key、限流开关等；
+    # DATABASE_URL / REDIS_URL 由下面的 environment 覆盖成 compose 服务名。
+    env_file:
+      - .env.team
+    environment:
+      # 容器内监听所有网卡；宿主侧只发布到 127.0.0.1，由 Caddy 终结 TLS。
+      BIND_ADDR: "0.0.0.0:8088"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-chiron}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.team}@postgres:5432/${POSTGRES_DB:-chiron}
+      CONTROL_DATABASE_URL: postgresql://${POSTGRES_USER:-chiron}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.team}@postgres:5432/chiron_control
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "127.0.0.1:8088:8088"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # sandbox / 容器管理：注意这等价于把宿主 root 权限交给该容器，别在容器里跑不可信代码。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # agent 数据根：宿主路径必须与 SANDBOX_DATA_ROOT 完全一致。
+      - /var/agent-data:/var/agent-data
+    # 非 root 运行（镜像内 UID/GID 1000）；访问 docker.sock 靠附加宿主 docker 组。
+    # DOCKER_GID 取 `stat -c '%g' /var/run/docker.sock` 的结果，写进 .env.team。
+    group_add:
+      - "${DOCKER_GID:-999}"
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # liveness 用 /healthz；/readyz 依赖 PG/Redis/docker，任一抖动就会 503，
+      # 拿它做 liveness 会造成"依赖没起来→容器被判死"的误判。
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8088/healthz >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks: [backend]
+
+networks:
+  # 不设 internal: true —— 服务端要出网访问模型 provider。
+  backend:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:

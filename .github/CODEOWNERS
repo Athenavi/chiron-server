@@ -1,0 +1,18 @@
+# Default owners for everything in the repository.
+# TODO: replace @Athenavi with the actual maintainer team handle.
+* @Athenavi
+
+# Tenant isolation, auth and the control plane are reviewed by the same group:
+# a mistake here can cross tenant boundaries.
+/src/tenant/        @Athenavi
+/src/auth.rs        @Athenavi
+/src/control/       @Athenavi
+/src/egress.rs      @Athenavi
+/migrations/        @Athenavi
+/migrations_control/ @Athenavi
+
+# Front-ends and deployment files follow the same review path until there are
+# dedicated owners.
+/web/               @Athenavi
+/console/           @Athenavi
+/deploy/            @Athenavi

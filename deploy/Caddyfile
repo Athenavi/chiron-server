@@ -1,0 +1,102 @@
+# chiron-server 团队部署反代（Caddy 2）—— 多租户示例。
+#
+# 一个 Caddy 实例接管全部域名：
+#   - 平台控制台：PLATFORM_HOST（如 platform.example.com）
+#   - 租户子域名：<slug>.<TENANT_BASE_DOMAIN>（如 acme.apps.example.com）
+#   - 租户自定义域名：控制台绑定 + DNS TXT 验证（chiron-verify=<tenant_uuid>）
+#
+# 本文件不维护租户清单：Host 原样透传给服务端，由服务端查控制库
+# `tenant_domains` 判定租户；未知 Host 由服务端返回 404（不是反代）。
+#
+# 证书：按需签发（on-demand TLS）。首次 TLS 握手时 Caddy 用
+# `GET <ask>?domain=<host>` 询问平台侧是否允许签发，2xx 才继续；
+# 该端点必须由平台/运维侧提供，契约与前置条件见 deploy/caddy/README.md。
+# 没有 ask 端点就不要开 on_demand —— 否则任何人指向你的 IP 都能耗光证书配额。
+#
+# 需要的外部环境变量（systemd 写进 EnvironmentFile，默认 /etc/default/caddy）：
+#   CHIRON_TLS_ASK_URL   ask 端点完整 URL（必备，无默认值）
+#   CHIRON_ACME_EMAIL    ACME 通知邮箱
+#   CHIRON_UPSTREAM      服务端地址，默认 127.0.0.1:8088
+#
+# 校验：CHIRON_TLS_ASK_URL=<你的 ask 地址> caddy validate --config deploy/Caddyfile
+# 重载：systemctl reload caddy
+# 回滚：恢复备份的 Caddyfile 后 systemctl reload caddy（证书与 key 在 Caddy 数据目录，不受影响）
+
+{
+	email {$CHIRON_ACME_EMAIL:ops@example.com}
+
+	# on-demand 授权检查。只保留 ask：interval/burst 限流参数已不被推荐，
+	# 防止证书农场要靠 ask 端点自身的拒绝逻辑与速率限制（见 README）。
+	on_demand_tls {
+		ask {$CHIRON_TLS_ASK_URL}
+	}
+}
+
+# 通配 Host 站点：所有到达 443 的域名（平台、<slug>.<base>、自定义域名）都走这里，
+# 是否签发证书由上面的 ask 端点决定，是否放行请求由服务端按 Host 决定。
+# `https://` 形式同时保留 Caddy 自动的 80→443 跳转与 ACME HTTP-01 挑战入口。
+https:// {
+	# 按需签发：握手时按 SNI/Host 取证书，不预生成。
+	# 若要改为单站点（只服务一个域名），把本行站点地址换成 {$CHIRON_DOMAIN:chat.example.com}
+	# 并删除 tls 块即可，其余指令无需改动。
+	tls {
+		on_demand
+	}
+
+	# 上传上限 70MB。request_body 需要 Caddy 2.10+；更旧的版本请用 Nginx 的
+	# client_max_body_size 70m，或直接删掉本块（服务端对非媒体接口没有 body 上限；
+	# 媒体上传服务端自身限制 50 MiB）。
+	request_body {
+		max_size 70MB
+	}
+
+	# SSE：必须逐条 flush，否则事件会被攒在反代缓冲里，前端看到"卡住不动"。
+	# 心跳 15s 一条，关缓冲后才能按到达时间推送。路径与 docs/API.md 一致。
+	@sse path /api/v1/sessions/*/events
+	handle @sse {
+		reverse_proxy {$CHIRON_UPSTREAM:127.0.0.1:8088} {
+			flush_interval -1
+			transport http {
+				dial_timeout 5s
+			}
+			# 显式透传原始 Host：服务端按 Host 解析租户。
+			header_up Host {host}
+			# 覆盖而不是追加 X-Forwarded-For：服务端取第一段当客户端 IP，
+			# 追加模式下客户端可以自带一条伪造 IP 绕过登录限流与审计。
+			header_up X-Forwarded-For {http.request.remote.host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy {$CHIRON_UPSTREAM:127.0.0.1:8088} {
+			flush_interval -1
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 30s
+			}
+			header_up Host {host}
+			header_up X-Forwarded-For {http.request.remote.host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/chiron-access.log {
+			roll_size 100mb
+			roll_keep 5
+		}
+		format json
+	}
+}

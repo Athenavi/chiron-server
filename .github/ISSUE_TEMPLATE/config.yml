@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Athenavi/chiron-server/security/advisories/new
+    about: Report privately. Do not open a public issue for security problems.
+  - name: Question or deployment help
+    url: https://github.com/Athenavi/chiron-server/discussions
+    about: Ask here first; also read docs/deploy.md and SUPPORT.md.
+  - name: API and deployment docs
+    url: https://github.com/Athenavi/chiron-server/tree/main/docs
+    about: Tenant API, platform API, error codes, SSE, compose and environment variables.

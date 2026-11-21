@@ -1,0 +1,14 @@
+/target
+.env
+# 团队部署的真实环境变量（含 JWT_SECRET 与 provider key）；模板是 .env.team.example。
+.env.team
+
+.idea/
+
+.dev/
+.tmp-pg/
+.dev-pg/
+console/test-results/
+console/playwright-report/
+web/test-results/
+web/playwright-report/

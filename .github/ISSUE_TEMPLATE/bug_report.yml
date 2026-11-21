@@ -1,0 +1,108 @@
+name: Bug report
+description: Something behaves differently from the docs or from what the code promises.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please redact tokens, provider keys, DSNs and customer data.
+        Security vulnerabilities must go through SECURITY.md, not this form.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues (open and closed) for the same problem.
+          required: true
+        - label: I read docs/PRD.md, docs/API.md and docs/deploy.md where relevant.
+          required: true
+        - label: This is not a security vulnerability (those are reported privately).
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD`, or the release tag.
+      placeholder: "e.g. 0.1.0 / 8133fdc"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment shape
+      options:
+        - Single database (dev, no CONTROL_DATABASE_URL)
+        - Multi-tenant (control DB + per-tenant DBs)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Tenant API / auth / sessions
+        - Agent runtime (tools, approvals, subagents, checkpoints)
+        - Sandbox / container / workspace
+        - Egress proxy
+        - Platform API / provisioning / domains
+        - Console (console/)
+        - Web workspace (web/)
+        - Deploy / compose / migrations
+        - Docs
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Actual behavior, including HTTP status and the `error.code` if any.
+      placeholder: "POST /api/v1/sessions/.../messages returned 500 {code: internal_error}, expected a run."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands, request bodies (redacted), tenant host usage.
+      placeholder: |
+        1. docker compose --env-file .env.team -f docker-compose.team.yml up -d
+        2. POST /api/platform/v1/tenants {slug: acme, ...}
+        3. GET /api/v1/sessions with Host: acme.apps.example.com
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Relevant structured JSON log lines, `curl -fsS /readyz` output.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, host architecture, Rust version, Docker version, sysbox/gVisor/Kata runtime, browser if UI.
+      placeholder: "Ubuntu 24.04, x64, rustc 1.83, Docker 27, sysbox-runc 0.6.4, no Redis (dev mode)"
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Workarounds tried, whether it is intermittent, related issues.

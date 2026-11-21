@@ -1,0 +1,10 @@
+# 行尾约定：容器/反代/Docker 相关文件在 Linux 上被直接解析或执行，必须是 LF。
+# Windows 上 core.autocrlf=true 时，没有这些规则会在 checkout 时变成 CRLF，
+# 导致 Dockerfile 的 RUN 带上 \r、Caddyfile 与 shell 脚本解析失败。
+deploy/server/Dockerfile text eol=lf
+deploy/agent/Dockerfile text eol=lf
+deploy/Caddyfile text eol=lf
+docker-compose.team.yml text eol=lf
+docker-compose.dev.yml text eol=lf
+.env.team.example text eol=lf
+.env.example text eol=lf
