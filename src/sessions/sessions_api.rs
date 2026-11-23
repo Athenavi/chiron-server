@@ -16,7 +16,8 @@ use crate::{
     auth::CurrentUser,
     error::{ApiResult, AppError},
     sessions::{
-        cursor, event_log, is_admin, load_session, ok, validate_title, SessionRow, SESSION_COLUMNS,
+        cursor, event_log, is_admin, load_session, ok, validate_title, ConversationSettings,
+        SessionRow, SESSION_COLUMNS,
     },
     state::AppState,
 };
@@ -239,6 +240,9 @@ pub struct UpdateSessionBody {
     /// true 归档，false 取消归档。
     #[serde(default)]
     pub archived: Option<bool>,
+    /// 会话级对话偏好，存入 metadata.chat。
+    #[serde(default)]
+    pub settings: Option<ConversationSettings>,
 }
 
 pub async fn update_session(
@@ -248,7 +252,8 @@ pub async fn update_session(
     body: Option<Json<UpdateSessionBody>>,
 ) -> ApiResult<Response> {
     let body = body.map(|Json(b)| b).unwrap_or_default();
-    if body.title.is_none() && body.model.is_none() && body.archived.is_none() {
+    if body.title.is_none() && body.model.is_none() && body.archived.is_none() && body.settings.is_none()
+    {
         return Err(AppError::bad_request("nothing to update"));
     }
     let title = validate_title(body.title)?;
@@ -256,6 +261,13 @@ pub async fn update_session(
         .model
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty());
+    let settings = match body.settings {
+        Some(settings) => Some(
+            serde_json::to_value(settings.validate()?)
+                .map_err(|e| AppError::internal(format!("serialize settings: {e}")))?,
+        ),
+        None => None,
+    };
 
     let row = sqlx::query_as::<_, SessionRow>(&format!(
         "UPDATE sessions SET \
@@ -269,6 +281,8 @@ pub async fn update_session(
                WHEN $5::bool IS TRUE THEN COALESCE(archived_at, now()) \
                WHEN $5::bool IS FALSE THEN NULL \
                ELSE archived_at END, \
+           metadata = CASE WHEN $8::jsonb IS NULL THEN metadata \
+                           ELSE jsonb_set(metadata, '{{chat}}', $8::jsonb, true) END, \
            updated_at = now() \
          WHERE id = $1 AND tenant_id = $2 AND ($6::bool OR user_id = $7) \
            AND status <> 'deleted' \
@@ -281,6 +295,7 @@ pub async fn update_session(
     .bind(body.archived)
     .bind(is_admin(&actor))
     .bind(actor.id)
+    .bind(settings)
     .fetch_optional(&state.db())
     .await?
     .ok_or_else(|| AppError::not_found("session not found"))?;

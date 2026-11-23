@@ -272,6 +272,10 @@ pub enum ToolChoice {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ChatRequest {
     pub model: String,
+    /// 租户会话 ID；OpenCode Go 等网关要求用它做路由会话。
+    pub session_id: Option<String>,
+    /// low/medium/high；None = 不显式发送推理强度。
+    pub reasoning_effort: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<ToolDef>,
     pub tool_choice: Option<ToolChoice>,

@@ -150,6 +150,13 @@ impl Toolset {
         self
     }
 
+    /// 批量覆盖所有有副作用的工具（写盘/执行/出网）。
+    pub fn set_mutating(&mut self, policy: Policy) {
+        for name in [WRITE, EDIT, SHELL, RUN_CODE, GIT, WEB_FETCH] {
+            self.policies.insert(name, policy);
+        }
+    }
+
     fn set_by_name(&mut self, name: &str, policy: Policy) {
         if let Some(key) = self.policies.keys().find(|k| **k == name).copied() {
             self.policies.insert(key, policy);

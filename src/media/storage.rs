@@ -326,16 +326,17 @@ const S3_CONNECT_TIMEOUT_SECS: u64 = 10;
 const S3_EMPTY_PAYLOAD_SHA256: &str =
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// S3 构造参数（只由 [`S3Storage::from_env`] 或测试填充）。
-struct S3Options {
-    bucket: String,
-    region: String,
-    endpoint: Option<String>,
-    access_key: String,
-    secret_key: String,
-    session_token: Option<String>,
-    path_style: Option<bool>,
-    prefix: Option<String>,
+/// S3 构造参数（公开给后台配置构造器）。
+#[derive(Clone)]
+pub struct S3Options {
+    pub bucket: String,
+    pub region: String,
+    pub endpoint: Option<String>,
+    pub access_key: String,
+    pub secret_key: String,
+    pub session_token: Option<String>,
+    pub path_style: Option<bool>,
+    pub prefix: Option<String>,
 }
 
 #[cfg(test)]
@@ -442,6 +443,11 @@ impl S3Storage {
             path_style,
             prefix: env_trimmed("CHIRON_MEDIA_S3_PREFIX"),
         })
+    }
+
+    /// 显式构造（不做任何网络访问）。
+    pub fn from_options(opts: S3Options) -> Result<Self, String> {
+        Self::new(opts)
     }
 
     /// 显式构造（不做任何网络访问）。
@@ -873,6 +879,56 @@ fn encode_segment(segment: &str) -> String {
         }
     }
     out
+}
+
+/// 后台/环境变量合并后的媒体后端配置。
+#[derive(Clone)]
+pub struct MediaStorageConfig {
+    pub backend: String,
+    pub local_root: PathBuf,
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub webdav_prefix: String,
+    pub s3: Option<S3Options>,
+}
+
+pub fn from_values(cfg: &MediaStorageConfig) -> Result<Arc<dyn MediaStorage>, String> {
+    match cfg.backend.trim().to_ascii_lowercase().as_str() {
+        "" | "local" => Ok(Arc::new(LocalStorage::new(cfg.local_root.clone()))),
+        "webdav" => {
+            let storage = WebDavStorage::new(
+                &cfg.webdav_url,
+                Some(&cfg.webdav_username),
+                Some(&cfg.webdav_password),
+                Some(&cfg.webdav_prefix),
+            )
+            .map_err(|e| format!("media backend `webdav` is misconfigured: {e}"))?;
+            Ok(Arc::new(storage))
+        }
+        "s3" => {
+            let opts = cfg
+                .s3
+                .clone()
+                .ok_or_else(|| "media backend `s3` has no credentials".to_string())?;
+            let storage = S3Storage::from_options(opts)
+                .map_err(|e| format!("media backend `s3` is misconfigured: {e}"))?;
+            Ok(Arc::new(storage))
+        }
+        other => Err(format!(
+            "unknown media backend `{other}`; use `local`, `webdav` or `s3`"
+        )),
+    }
+}
+
+/// 读取后台配置（控制库优先、env 兜底）构造当前媒体后端。
+pub async fn from_state(
+    state: &crate::state::AppState,
+) -> Result<Arc<dyn MediaStorage>, String> {
+    let cfg = crate::control::settings::load_media(state)
+        .await
+        .map_err(|err| format!("media settings unavailable: {}", err.message))?;
+    from_values(&cfg)
 }
 
 /// 按 `CHIRON_MEDIA_BACKEND` 选择后端：local（默认）/ webdav；S3 预留但明确不可用。

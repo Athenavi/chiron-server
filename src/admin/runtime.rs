@@ -451,7 +451,8 @@ pub fn provider_health_tenant_aware(
                 p.label.to_string(),
                 p.protocol.as_str(),
                 p.requires_key,
-                is_configured(p.api_key_env),
+                is_configured(p.api_key_env)
+                    || crate::provider::catalog::platform_key_configured(p.id),
                 facts.and_then(|map| map.get(p.id)),
             )
         })

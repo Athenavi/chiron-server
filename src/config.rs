@@ -60,6 +60,13 @@ pub struct Config {
     pub metrics_token: String,
     /// 外部支付回写 HMAC 密钥；空 = 关闭 billing webhook。
     pub billing_webhook_secret: String,
+    /// 支付宝开放平台应用与密钥；缺任一项则支付宝功能关闭。
+    pub alipay_app_id: String,
+    pub alipay_private_key: String,
+    pub alipay_public_key: String,
+    pub alipay_gateway: String,
+    pub alipay_notify_url: String,
+    pub alipay_return_url: String,
     /// 域名 TLS 状态探测间隔；0 = 关闭。
     pub tls_probe_secs: u64,
     /// 单域名 TLS 探测超时秒数（默认 5）。
@@ -544,6 +551,13 @@ impl Config {
             alert_cooldown_secs: env_parse("CHIRON_ALERT_COOLDOWN_SECS", 1800u64),
             metrics_token,
             billing_webhook_secret: env::var("CHIRON_BILLING_WEBHOOK_SECRET").unwrap_or_default(),
+            alipay_app_id: env::var("ALIPAY_APP_ID").unwrap_or_default(),
+            alipay_private_key: env::var("ALIPAY_PRIVATE_KEY").unwrap_or_default(),
+            alipay_public_key: env::var("ALIPAY_PUBLIC_KEY").unwrap_or_default(),
+            alipay_gateway: env::var("ALIPAY_GATEWAY")
+                .unwrap_or_else(|_| "https://openapi.alipay.com/gateway.do".to_string()),
+            alipay_notify_url: env::var("ALIPAY_NOTIFY_URL").unwrap_or_default(),
+            alipay_return_url: env::var("ALIPAY_RETURN_URL").unwrap_or_default(),
             tls_probe_secs: env_parse("CHIRON_TLS_PROBE_SECS", 0u64),
             tls_probe_timeout_secs: env_parse("CHIRON_TLS_PROBE_TIMEOUT_SECS", 5u64),
             alert_active_runs: env_parse("CHIRON_ALERT_ACTIVE_RUNS", 0u64),
@@ -640,6 +654,12 @@ impl Config {
             alert_cooldown_secs: 1800,
             metrics_token: String::new(),
             billing_webhook_secret: String::new(),
+            alipay_app_id: String::new(),
+            alipay_private_key: String::new(),
+            alipay_public_key: String::new(),
+            alipay_gateway: "https://openapi.alipay.com/gateway.do".to_string(),
+            alipay_notify_url: String::new(),
+            alipay_return_url: String::new(),
             tls_probe_secs: 0,
             tls_probe_timeout_secs: 5,
             alert_active_runs: 0,

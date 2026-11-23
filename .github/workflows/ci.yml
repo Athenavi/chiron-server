@@ -88,7 +88,8 @@ jobs:
       - run: npm run build
 
   console:
-    runs-on: ubuntu-latest
+    # Playwright's Ubuntu dependency set may lag ubuntu-latest; pin a supported image.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: console
@@ -115,7 +116,8 @@ jobs:
         run: docker build -f deploy/agent/Dockerfile -t chiron-agent:ci deploy/agent
 
   backup-drill:
-    runs-on: ubuntu-latest
+    # Keep the client major aligned with the postgres:16 service.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -133,8 +135,8 @@ jobs:
       PGPASSWORD: chiron
     steps:
       - uses: actions/checkout@v4
-      - name: Install PostgreSQL 16 client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
       - name: Seed a tenant database
         run: |
           psql -h 127.0.0.1 -U chiron -d chiron -v ON_ERROR_STOP=1 \

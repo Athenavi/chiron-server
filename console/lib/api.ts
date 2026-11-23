@@ -131,6 +131,73 @@ export type BillReconcile = {
   tenant_db: { tokens_in: number; tokens_out: number; cost_cents: number; runs: number }
 }
 
+export type AlipaySettings = {
+  app_id: string
+  notify_url: string
+  return_url: string
+  gateway: string
+  has_private_key: boolean
+  has_public_key: boolean
+  configured: boolean
+  stored_in_db: string[]
+  secrets_key_configured: boolean
+}
+
+export type AlipaySettingsBody = {
+  app_id?: string
+  private_key?: string
+  public_key?: string
+  notify_url?: string
+  return_url?: string
+  gateway?: string
+}
+
+export type AlertSettings = {
+  webhook_configured: boolean
+  cooldown_secs: number
+  active_runs: number
+  tenant_pools: number
+  egress_denied: number
+}
+
+export type RatePolicyView = { burst: number; per_minute: number }
+
+export type RateSettings = {
+  enabled: boolean
+  login: RatePolicyView
+  submit: RatePolicyView
+  tool: RatePolicyView
+  heavy: RatePolicyView
+}
+
+export type MediaSettings = {
+  backend: string
+  webdav: {
+    url: string
+    username: string
+    prefix: string
+    has_password: boolean
+  }
+  s3: {
+    bucket: string
+    region: string
+    endpoint: string | null
+    path_style: boolean | null
+    prefix: string | null
+    has_access_key: boolean
+    has_secret_key: boolean
+    has_session_token: boolean
+  }
+}
+
+export type ProviderEntry = {
+  id: string
+  label: string
+  requires_key: boolean
+  configured: boolean
+  stored_in_db: boolean
+}
+
 export type PlatformMe = {
   id: string
   email: string
@@ -143,9 +210,10 @@ export type TotpSetup = {
 }
 
 // 生产默认同源（由反代转发 /api/platform），避免浏览器请求访问者的 localhost。
+const DEV_PROXY = process.env.NEXT_PUBLIC_DEV_PROXY === '1'
 const BASE =
   process.env.NEXT_PUBLIC_PLATFORM_API_BASE ||
-  (process.env.NODE_ENV === 'production' ? '' : 'http://127.0.0.1:8088')
+  (process.env.NODE_ENV === 'production' || DEV_PROXY ? '' : 'http://127.0.0.1:8088')
 const TOKEN_KEY = 'chiron_platform_token'
 // 生产靠 httpOnly 平台 cookie；sessionStorage Bearer 只服务跨端口本地开发。
 const PERSIST_TOKEN = process.env.NODE_ENV !== 'production'
@@ -278,6 +346,42 @@ export const api = {
     request<BillReconcile>(
       `/api/platform/v1/tenants/${id}/bill/reconcile?month=${encodeURIComponent(month)}`,
     ),
+  alipaySettings: () =>
+    request<{ alipay: AlipaySettings }>('/api/platform/v1/settings/integrations/alipay').then(
+      r => r.alipay,
+    ),
+  saveAlipaySettings: (body: AlipaySettingsBody) =>
+    request<{ alipay: AlipaySettings }>('/api/platform/v1/settings/integrations/alipay', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }).then(r => r.alipay),
+  alertSettings: () => request<AlertSettings>('/api/platform/v1/settings/alerts'),
+  saveAlertSettings: (body: Record<string, string | number>) =>
+    request<AlertSettings>('/api/platform/v1/settings/alerts', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  rateSettings: () => request<RateSettings>('/api/platform/v1/settings/rate-limits'),
+  saveRateSettings: (body: Record<string, unknown>) =>
+    request<RateSettings>('/api/platform/v1/settings/rate-limits', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  mediaSettings: () => request<MediaSettings>('/api/platform/v1/settings/media'),
+  saveMediaSettings: (body: Record<string, unknown>) =>
+    request<MediaSettings>('/api/platform/v1/settings/media', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  providerSettings: () =>
+    request<{ providers: ProviderEntry[] }>('/api/platform/v1/settings/providers').then(
+      r => r.providers,
+    ),
+  saveProviderKey: (provider: string, apiKey: string) =>
+    request<{ providers: ProviderEntry[] }>('/api/platform/v1/settings/providers', {
+      method: 'PUT',
+      body: JSON.stringify({ keys: { [provider]: apiKey } }),
+    }).then(r => r.providers),
   verifyDomain: (id: string, domainId: string) =>
     request<{ domain: Domain }>(
       `/api/platform/v1/tenants/${id}/domains/${domainId}/verify`,

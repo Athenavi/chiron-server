@@ -173,12 +173,19 @@ async fn main() -> anyhow::Result<()> {
         control: control.clone(),
         tenants,
         limits: Arc::new(admin::limits::RateLimiter::new(cfg.rate_limit.clone())),
+        alerts: Arc::new(std::sync::RwLock::new(
+            crate::state::AlertSettings::from_config(&cfg),
+        )),
         runtime: Arc::new(admin::runtime::RuntimeCounters::default()),
         events,
         leases,
     });
 
     tracing::info!("state built");
+
+    if let Err(err) = crate::control::settings::apply_runtime(&state).await {
+        tracing::warn!(error = %err.message, "runtime settings apply failed; using env defaults");
+    }
 
     if let Some(control_state) = control.as_ref() {
         control::bootstrap_admin(&state, control_state).await;

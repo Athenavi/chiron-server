@@ -19,12 +19,12 @@ import {
   type DisplayWidth,
 } from './DisplaySettings'
 
-interface Choice<T extends string> {
+export interface Choice<T extends string> {
   value: T
   labelKey: string
 }
 
-function ChoiceGroup<T extends string>({
+export function ChoiceGroup<T extends string>({
   label,
   value,
   options,

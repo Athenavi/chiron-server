@@ -39,6 +39,9 @@ fn instance(node: &str, bus: Arc<EventBus>, leases: Arc<MemoryLeaseStore>) -> Ar
         cfg: cfg.clone(),
         sandbox: Arc::new(SandboxManager::new(cfg.sandbox.clone())),
         limits: Arc::new(RateLimiter::new(cfg.rate_limit.clone())),
+        alerts: Arc::new(std::sync::RwLock::new(
+            crate::state::AlertSettings::from_config(&cfg),
+        )),
         runtime: Arc::new(RuntimeCounters::default()),
         events: Arc::new(MemoryEventLog::shared(bus, 8)),
         leases,

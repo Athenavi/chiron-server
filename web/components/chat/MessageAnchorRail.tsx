@@ -3,8 +3,8 @@
 /**
  * 消息快速跳转锚点（右侧「钢琴键」）。
  *
- * - 消息超过两条才出现；长会话按固定上限抽样，避免锚点溢出屏幕；
- * - 每根键代表一条消息，点击滚动到消息中部；滚动时高亮当前所在消息；
+ * - 只给用户消息建锚点，超过两条才出现；长会话按固定上限抽样，避免锚点溢出屏幕；
+ * - 每根键代表一条用户消息，点击滚动到消息中部；滚动时高亮当前所在消息；
  * - 宽度/动画延迟由消息文本哈希决定，形成轻微律动；`prefers-reduced-motion` 下停用。
  */
 
@@ -39,17 +39,20 @@ function hash(value: string): number {
 }
 
 function buildAnchors(messages: MessageView[]): Anchor[] {
-  if (messages.length <= 2) return []
-  const step = messages.length > MAX_ANCHORS ? (messages.length - 1) / (MAX_ANCHORS - 1) : 1
-  const count = messages.length > MAX_ANCHORS ? MAX_ANCHORS : messages.length
+  const userMessages = messages.filter((message) => message.role === 'user')
+  if (userMessages.length <= 2) return []
+  const step =
+    userMessages.length > MAX_ANCHORS ? (userMessages.length - 1) / (MAX_ANCHORS - 1) : 1
+  const count = userMessages.length > MAX_ANCHORS ? MAX_ANCHORS : userMessages.length
   const anchors: Anchor[] = []
   for (let slot = 0; slot < count; slot += 1) {
     const index = Math.round(slot * step)
-    const message = messages[index]
+    const message = userMessages[index]
     if (!message) continue
     const seed = hash(`${message.id}:${message.role}`)
     anchors.push({
       id: message.id,
+      // 编号按用户消息次序展示，而不是全会话内的绝对位置。
       index,
       preview: previewOf(message),
       width: 9 + (seed % 13),

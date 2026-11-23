@@ -457,6 +457,7 @@ async function updateSession(id: string, body: UpdateSessionRequest): Promise<Up
   if (body.model !== undefined) payload.model = body.model
   if (body.archived !== undefined) payload.archived = body.archived
   else if (body.status !== undefined) payload.archived = body.status === 'archived'
+  if (body.settings !== undefined) payload.settings = body.settings
   return request<UpdateSessionResult>(`/sessions/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: payload,

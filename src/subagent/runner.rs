@@ -243,6 +243,7 @@ pub async fn run_child(
         run_id: id,
         model: deps.model.clone(),
         system_prompt: deps.system_prompt.clone(),
+        reasoning_effort: None,
         history: vec![ChatMessage::user(spec.task.clone())],
         budget: Budget {
             max_input_tokens: budget.max_input_tokens,

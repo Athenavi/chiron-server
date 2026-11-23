@@ -6,7 +6,7 @@
 //!   其余一律 `application/octet-stream` + attachment，避免 HTML/SVG 型 XSS；
 //! - 单文件上限 50 MiB；磁盘 key 由服务端生成，文件名仅展示。
 
-mod storage;
+pub(crate) mod storage;
 
 use std::{
     collections::HashSet,
@@ -238,7 +238,8 @@ pub async fn upload_media(
     let filename = display_name(q.filename.as_deref(), &mime);
     let id = Uuid::new_v4();
     let key = storage_key(&actor, id);
-    let storage = storage::from_config(&state.cfg)
+    let storage = storage::from_state(&state)
+        .await
         .map_err(|msg| AppError::new(StatusCode::SERVICE_UNAVAILABLE, "media_unavailable", msg))?;
     storage.put(&key, &body).await.map_err(|e| {
         tracing::error!(error = %e, "media put failed");
@@ -291,7 +292,8 @@ pub async fn media_content(
     Query(q): Query<ContentQuery>,
 ) -> ApiResult<Response> {
     let row = load_media(&state, &actor, id).await?;
-    let storage = storage::from_config(&state.cfg)
+    let storage = storage::from_state(&state)
+        .await
         .map_err(|msg| AppError::new(StatusCode::SERVICE_UNAVAILABLE, "media_unavailable", msg))?;
     let key = storage_key(&actor, row.id);
     let bytes = tokio::time::timeout(Duration::from_secs(10), storage.get(&key))
@@ -331,7 +333,7 @@ pub async fn delete_media(
         .bind(actor.tenant_id)
         .execute(&state.db())
         .await?;
-    if let Ok(storage) = storage::from_config(&state.cfg) {
+    if let Ok(storage) = storage::from_state(&state).await {
         let _ = storage.delete(&storage_key(&actor, id)).await;
     }
     audit(
@@ -391,7 +393,8 @@ pub async fn media_migrate(
     }
     let tenant = crate::tenant::current_tenant()
         .ok_or_else(|| AppError::bad_request("media migrate requires a tenant context"))?;
-    let target = storage::from_config(&state.cfg)
+    let target = storage::from_state(&state)
+        .await
         .map_err(|msg| AppError::new(StatusCode::SERVICE_UNAVAILABLE, "media_unavailable", msg))?;
     let source = storage::LocalStorage::new(state.cfg.media_root_path());
     let rows: Vec<(Uuid, Uuid, i64, String)> = sqlx::query_as(

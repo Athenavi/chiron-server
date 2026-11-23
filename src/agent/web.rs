@@ -21,8 +21,13 @@ use super::error::AgentError;
 
 /// 默认响应体上限（1 MiB）。
 pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
+/// HTML 转文本后交给模型的默认上限；整页 1 MiB HTML 会直接撑爆 6 万 token 预算。
+pub const DEFAULT_TEXT_MAX_CHARS: usize = 20_000;
 const MAX_REDIRECTS: usize = 3;
 const REQUEST_TIMEOUT_SECS: u64 = 20;
+/// 连接被重置/超时多为链路抖动或 DNS 污染，重试前重新解析一次。
+const FETCH_ATTEMPTS: usize = 3;
+const RETRY_BACKOFF_MS: [u64; 2] = [400, 1200];
 
 const BLOCKED_HOST_SUFFIXES: &[&str] = &[".local", ".internal", ".localhost", ".lan", ".home"];
 const BLOCKED_HOSTS: &[&str] = &["localhost", "metadata", "metadata.google.internal"];
@@ -42,6 +47,7 @@ pub struct WebClient {
     /// 测试/内网部署可显式放行私网地址（默认拒绝）。
     allow_private: bool,
     max_bytes: usize,
+    text_max_chars: usize,
 }
 
 impl std::fmt::Debug for WebClient {
@@ -67,10 +73,16 @@ impl WebClient {
             .user_agent("chiron-server/web_fetch")
             .build()
             .unwrap_or_default();
+        let text_max_chars = std::env::var("CHIRON_WEB_TEXT_MAX_CHARS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|v| *v >= 1000)
+            .unwrap_or(DEFAULT_TEXT_MAX_CHARS);
         Self {
             client,
             allow_private,
             max_bytes: DEFAULT_MAX_BYTES,
+            text_max_chars,
         }
     }
 
@@ -95,13 +107,7 @@ impl WebClient {
             .map_err(|e| AgentError::Tool(format!("invalid url: {e}")))?;
         let mut hops = 0;
         loop {
-            let pin = self.check_url(&url).await?;
-            let client = self.client_for(pin.as_ref())?;
-            let response = client
-                .get(url.clone())
-                .send()
-                .await
-                .map_err(|e| AgentError::Tool(format!("web_fetch failed: {e}")))?;
+            let response = self.send_with_retry(&url).await?;
 
             if response.status().is_redirection() {
                 if hops >= MAX_REDIRECTS {
@@ -125,15 +131,52 @@ impl WebClient {
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
-            let (bytes, truncated) = self.read_capped(response).await;
+            let (bytes, mut truncated) = self.read_capped(response).await;
+            let raw = String::from_utf8_lossy(&bytes);
+            let looks_html = content_type
+                .as_deref()
+                .map(|value| value.to_ascii_lowercase().contains("html"))
+                .unwrap_or_else(|| raw.trim_start().starts_with('<'));
+            let text = if looks_html {
+                html_to_text(&raw)
+            } else {
+                raw.into_owned()
+            };
+            let (body, text_cut) = cap_text(text, self.text_max_chars);
+            truncated |= text_cut;
             return Ok(WebPage {
                 url: url.to_string(),
                 status,
                 content_type,
-                body: String::from_utf8_lossy(&bytes).into_owned(),
+                body,
                 truncated,
             });
         }
+    }
+
+    /// 每次尝试都重新做 DNS 校验与地址固定，避免一次污染解析决定整次调用。
+    async fn send_with_retry(&self, url: &Url) -> Result<reqwest::Response, AgentError> {
+        let mut last: Option<reqwest::Error> = None;
+        for attempt in 0..FETCH_ATTEMPTS {
+            let pin = self.check_url(url).await?;
+            let client = self.client_for(pin.as_ref())?;
+            match client.get(url.clone()).send().await {
+                Ok(response) => return Ok(response),
+                Err(err) => {
+                    let retryable = err.is_connect() || err.is_timeout();
+                    last = Some(err);
+                    if !retryable || attempt + 1 >= FETCH_ATTEMPTS {
+                        break;
+                    }
+                    let backoff = RETRY_BACKOFF_MS[attempt.min(RETRY_BACKOFF_MS.len() - 1)];
+                    tokio::time::sleep(Duration::from_millis(backoff)).await;
+                }
+            }
+        }
+        Err(AgentError::Tool(format!(
+            "web_fetch failed: {}",
+            last.expect("attempt recorded")
+        )))
     }
 
     async fn read_capped(&self, response: reqwest::Response) -> (Vec<u8>, bool) {
@@ -234,6 +277,154 @@ impl WebClient {
         }
         Ok(())
     }
+}
+
+/// 粗粒度 HTML→文本：去掉脚本/样式/注释与标签，块级标签换行，解码常见实体。
+///
+/// 不是浏览器级渲染，只保证交给模型的正文不死于 1 MiB 标签噪音。
+pub fn html_to_text(html: &str) -> String {
+    const BLOCK_TAGS: &[&str] = &[
+        "p", "div", "br", "hr", "li", "ul", "ol", "tr", "td", "th", "table", "h1", "h2", "h3",
+        "h4", "h5", "h6", "section", "article", "header", "footer", "aside", "pre",
+        "blockquote", "title", "body", "html",
+    ];
+    let lower = html.to_ascii_lowercase();
+    let mut text = String::with_capacity(html.len());
+    let mut index = 0;
+    while index < html.len() {
+        if lower[index..].starts_with("<!--") {
+            match lower[index + 4..].find("-->") {
+                Some(end) => index += 4 + end + 3,
+                None => break,
+            }
+            continue;
+        }
+        let mut skipped = false;
+        for tag in ["script", "style", "noscript", "template", "svg"] {
+            if lower[index..].starts_with(&format!("<{tag}")) {
+                match lower[index..].find(&format!("</{tag}")) {
+                    Some(close) => match lower[index + close..].find('>') {
+                        Some(gt) => index += close + gt + 1,
+                        None => index = html.len(),
+                    },
+                    None => index = html.len(),
+                }
+                skipped = true;
+                break;
+            }
+        }
+        if skipped {
+            continue;
+        }
+        if lower.as_bytes()[index] == b'<' {
+            match lower[index..].find('>') {
+                Some(rel) => {
+                    let inner = &lower[index + 1..index + rel];
+                    let name: String = inner
+                        .trim_start_matches('/')
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric())
+                        .collect();
+                    if BLOCK_TAGS.contains(&name.as_str()) {
+                        text.push('\n');
+                    }
+                    index += rel + 1;
+                }
+                None => break,
+            }
+        } else {
+            let ch = html[index..].chars().next().unwrap_or(' ');
+            text.push(ch);
+            index += ch.len_utf8();
+        }
+    }
+    normalize_text(&decode_entities(&text))
+}
+
+fn decode_entities(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        let tail = &rest[pos..];
+        let window = &tail[..tail.len().min(16)];
+        let parsed = window.find(';').and_then(|semi| {
+            let entity = &tail[1..semi];
+            let decoded = match entity {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                _ => {
+                    let number = entity.strip_prefix('#').and_then(|raw| {
+                        if let Some(hex) = raw.strip_prefix(['x', 'X']) {
+                            u32::from_str_radix(hex, 16).ok()
+                        } else {
+                            raw.parse::<u32>().ok()
+                        }
+                    });
+                    number.and_then(char::from_u32)
+                }
+            };
+            decoded.map(|ch| (ch, semi))
+        });
+        match parsed {
+            Some((ch, semi)) => {
+                out.push(ch);
+                rest = &tail[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn normalize_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut pending_space = false;
+    let mut last_newline = false;
+    for ch in raw.chars() {
+        match ch {
+            '\n' | '\r' => {
+                if !out.is_empty() && !last_newline {
+                    out.push('\n');
+                    last_newline = true;
+                }
+                pending_space = false;
+            }
+            c if c.is_whitespace() => {
+                pending_space = !out.is_empty() && !last_newline;
+            }
+            c => {
+                if pending_space {
+                    out.push(' ');
+                }
+                out.push(c);
+                pending_space = false;
+                last_newline = false;
+            }
+        }
+    }
+    while out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn cap_text(text: String, max_chars: usize) -> (String, bool) {
+    if text.chars().count() <= max_chars {
+        return (text, false);
+    }
+    let mut cut: String = text.chars().take(max_chars).collect();
+    cut.push_str("\n…[truncated]");
+    (cut, true)
 }
 
 /// 回环/私网/链路本地/CGNAT/多播/未指定地址一律禁止。
@@ -368,5 +559,34 @@ mod tests {
         assert_eq!(page.status, 200);
         assert_eq!(page.body.len(), 1024);
         assert!(page.truncated);
+    }
+
+    #[test]
+    fn html_to_text_drops_scripts_and_decodes_entities() {
+        let html = r#"<html><head><style>.x{color:red}</style><title>T &amp; U</title></head>
+<body><!-- hidden --><script>alert('x')</script><h1>Hello&nbsp;World</h1>
+<p>Line&nbsp;one &lt;ok&gt; &#39;q&#39; &#x4E2D;</p><div>tail</div></body></html>"#;
+        let text = html_to_text(html);
+        assert!(!text.contains("alert"), "{text}");
+        assert!(!text.contains("color:red"), "{text}");
+        assert!(!text.contains("hidden"), "{text}");
+        assert!(text.contains("T & U"), "{text}");
+        assert!(text.contains("Hello World"), "{text}");
+        assert!(text.contains("'q'"), "{text}");
+        assert!(text.contains('中'), "{text}");
+        assert!(!text.contains("<p>"), "{text}");
+        assert!(!text.contains("<script"), "{text}");
+        assert!(text.contains("tail"), "{text}");
+    }
+
+    #[test]
+    fn cap_text_marks_truncation_on_char_boundaries() {
+        let (cut, truncated) = cap_text("中".repeat(10), 4);
+        assert!(truncated);
+        assert!(cut.starts_with("中中中中"));
+        assert!(cut.contains("[truncated]"));
+        let (whole, cut_off) = cap_text("hi".to_string(), 4);
+        assert!(!cut_off);
+        assert_eq!(whole, "hi");
     }
 }

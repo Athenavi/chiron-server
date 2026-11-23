@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{pin_mut, StreamExt};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, RETRY_AFTER};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, RETRY_AFTER, USER_AGENT,
+};
 use serde_json::{json, Map, Value};
 
 use super::sse::{SseEvent, SseParser};
@@ -42,7 +44,10 @@ impl OpenAiProvider {
             headers: Vec::new(),
             timeout: DEFAULT_TIMEOUT,
             include_usage: true,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -82,13 +87,29 @@ impl OpenAiProvider {
         format!("{}/{}", self.base_url.trim_end_matches('/'), path)
     }
 
-    fn build_headers(&self) -> HeaderMap {
+    fn build_headers(&self, session_id: Option<&str>) -> HeaderMap {
         let mut headers = HeaderMap::new();
         // content-type 交给 `.json()`（重复设置会被网关记成两个值）
         headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("chiron-agent/0.1"));
         if let Some(key) = &self.api_key {
             if let Ok(value) = HeaderValue::from_str(&format!("Bearer {key}")) {
                 headers.insert(AUTHORIZATION, value);
+            }
+        }
+        // OpenCode Go 按会话路由；缺少该头会返回 400 MissingSessionID。
+        if self.id.starts_with("opencode-go") {
+            tracing::debug!(
+                provider = %self.id,
+                session_present = session_id.is_some_and(|value| !value.trim().is_empty()),
+                "opencode request headers"
+            );
+            let session = session_id
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            if let Ok(value) = HeaderValue::from_str(&session) {
+                headers.insert(HeaderName::from_static("x-opencode-session"), value);
             }
         }
         for (name, value) in &self.headers {
@@ -127,6 +148,9 @@ impl OpenAiProvider {
         }
         if let Some(max_tokens) = request.max_tokens {
             body.insert("max_tokens".into(), json!(max_tokens));
+        }
+        if let Some(effort) = request.reasoning_effort.as_deref() {
+            body.insert("reasoning_effort".into(), json!(effort));
         }
         if !request.stop.is_empty() {
             body.insert("stop".into(), json!(&request.stop));
@@ -386,7 +410,7 @@ impl Provider for OpenAiProvider {
         let response = self
             .client
             .post(self.endpoint("chat/completions"))
-            .headers(self.build_headers())
+            .headers(self.build_headers(request.session_id.as_deref()))
             .timeout(self.timeout)
             .json(&body)
             .send()
@@ -448,7 +472,7 @@ impl Provider for OpenAiProvider {
         let response = self
             .client
             .get(self.endpoint("models"))
-            .headers(self.build_headers())
+            .headers(self.build_headers(None))
             .timeout(Duration::from_secs(30))
             .send()
             .await
@@ -566,6 +590,23 @@ data: [DONE]
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "read");
         assert_eq!(calls[0].arguments_json()["path"], "a.rs");
+    }
+
+    #[tokio::test]
+    async fn opencode_go_sends_session_header() {
+        let m = mock("data: [DONE]\n\n");
+        let rec = m.rec.clone();
+        let base = server(m).await;
+        let provider = OpenAiProvider::new("opencode-go", base).with_api_key("sk-test");
+        let mut request = ChatRequest::new("glm-4.6").with_messages(vec![ChatMessage::user("hi")]);
+        request.session_id = Some("session-123".into());
+        let stream = provider
+            .complete_stream(request)
+            .await
+            .expect("stream starts");
+        assert!(collect(stream).await.expect("stream parses").is_empty());
+        assert_eq!(rec.last().header("x-opencode-session"), Some("session-123"));
+        assert_eq!(rec.last().header("user-agent"), Some("chiron-agent/0.1"));
     }
 
     #[tokio::test]

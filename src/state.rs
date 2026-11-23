@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use sqlx::PgPool;
 
@@ -12,6 +12,27 @@ use crate::{
     tenant::TenantRegistry,
 };
 
+#[derive(Clone, Debug)]
+pub struct AlertSettings {
+    pub webhook_url: String,
+    pub cooldown_secs: u64,
+    pub active_runs: u64,
+    pub tenant_pools: u64,
+    pub egress_denied: u64,
+}
+
+impl AlertSettings {
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            webhook_url: cfg.alert_webhook_url.clone(),
+            cooldown_secs: cfg.alert_cooldown_secs,
+            active_runs: cfg.alert_active_runs,
+            tenant_pools: cfg.alert_tenant_pools,
+            egress_denied: cfg.alert_egress_denied,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
@@ -22,6 +43,8 @@ pub struct AppState {
     pub sandbox: Arc<SandboxManager>,
     /// B10 限流状态（进程内；多实例版本换成 Redis 计数器）。
     pub limits: Arc<RateLimiter>,
+    /// 运行态可热更新配置（告警阈值/Webhook 等）。
+    pub alerts: Arc<RwLock<AlertSettings>>,
     /// B10 运行态计数（SSE 连接等进程内指标）。
     pub runtime: Arc<RuntimeCounters>,
     /// B11 事件日志（内存 fallback 或 Redis Streams）：SSE 回放与实时续流。

@@ -1355,6 +1355,9 @@ export async function updateSession(id: string, body: UpdateSessionRequest): Pro
     session.status = archived ? 'archived' : 'active'
     session.archived_at = archived ? nowIso() : null
   }
+  if (body.settings !== undefined) {
+    session.metadata = { ...(session.metadata ?? {}), chat: body.settings }
+  }
   session.updated_at = nowIso()
   return { session: clone(session) }
 }

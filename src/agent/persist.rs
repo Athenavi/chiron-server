@@ -23,7 +23,7 @@ use super::{
 use crate::{
     provider::{ChatMessage, Role, ToolCall, Usage},
     providers,
-    sessions::event_log,
+    sessions::{event_log, ConversationSettings},
     state::AppState,
 };
 
@@ -31,7 +31,7 @@ use crate::{
 const ACTIVE: &str = "'queued', 'running', 'waiting_approval', 'waiting_user'";
 const HISTORY_LIMIT: i64 = 200;
 
-type SessionRow = (i16, Uuid, Option<String>, Option<String>, String);
+type SessionRow = (i16, Uuid, Option<String>, Option<String>, String, Value);
 
 /// 启动一次 run：注册进程内句柄并 spawn 循环。重复启动直接忽略。
 ///
@@ -126,13 +126,14 @@ async fn execute(
     }
 
     let session: Option<SessionRow> = sqlx::query_as(
-        "SELECT tenant_id, user_id, project_id, model, status FROM sessions WHERE id = $1",
+        "SELECT tenant_id, user_id, project_id, model, status, metadata FROM sessions WHERE id = $1",
     )
     .bind(session_id)
     .fetch_optional(&state.db())
     .await
     .map_err(|e| AgentError::Internal(e.to_string()))?;
-    let Some((tenant_id, user_id, project_id, session_model, session_status)) = session else {
+    let Some((tenant_id, user_id, project_id, session_model, session_status, metadata)) = session
+    else {
         tracing::warn!(%run_id, "session missing");
         return Ok(());
     };
@@ -232,7 +233,36 @@ async fn execute(
         depth: 0,
         remaining_tokens: state.cfg.agent.max_total_tokens,
     };
-    let toolset = Toolset::from_env();
+    let toolset = {
+        let mut set = Toolset::from_env();
+        let settings = ConversationSettings::from_metadata(&metadata);
+        match settings.tool_authorization.as_str() {
+            "auto" => {
+                set.set_mutating(crate::agent::tools::Policy::Allow);
+                set = set.with(crate::agent::tools::SUBAGENT, crate::agent::tools::Policy::Allow);
+            }
+            "readonly" => {
+                set.set_mutating(crate::agent::tools::Policy::Deny);
+                set = set.with(crate::agent::tools::SUBAGENT, crate::agent::tools::Policy::Deny);
+            }
+            _ => {
+                set.set_mutating(crate::agent::tools::Policy::Ask);
+                set = set.with(crate::agent::tools::SUBAGENT, crate::agent::tools::Policy::Ask);
+            }
+        }
+        set
+    };
+    let conversation = ConversationSettings::from_metadata(&metadata);
+    let prompt_suffix = conversation.prompt_suffix();
+    let deployment_prompt = if prompt_suffix.is_empty() {
+        state.cfg.agent.system_prompt.clone()
+    } else if state.cfg.agent.system_prompt.trim().is_empty() {
+        prompt_suffix
+    } else {
+        format!("{}\n\n{}", state.cfg.agent.system_prompt, prompt_suffix)
+    };
+    let reasoning_effort = (conversation.reasoning_effort != "auto")
+        .then_some(conversation.reasoning_effort.clone());
     let subagent_invoker = crate::subagent::runner::build_session_invoker(
         state.clone(),
         parent,
@@ -254,9 +284,10 @@ async fn execute(
         run_id,
         model,
         system_prompt: context::system_prompt_with_memory(
-            Some(&state.cfg.agent.system_prompt),
+            Some(&deployment_prompt),
             Some(&memory),
         ),
+        reasoning_effort,
         history,
         tools: toolset,
         budget: Budget {

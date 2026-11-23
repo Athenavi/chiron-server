@@ -133,6 +133,8 @@ export function ConsoleNav() {
       <Link href="/plans">{t('nav.plans')}</Link>
       <Link href="/usage">{t('nav.usage')}</Link>
       <Link href="/migrations">{t('nav.migrations')}</Link>
+      <Link href="/integrations">{t('nav.integrations')}</Link>
+      <Link href="/settings">{t('nav.settings')}</Link>
       <LocaleSwitcher />
     </header>
   )

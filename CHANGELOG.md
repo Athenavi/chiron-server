@@ -15,25 +15,36 @@ pre-1.0, breaking changes may land in minor releases.
   `pg_dump` backups.
 - **Tenant model services (M1).** Per-tenant key pools, model catalog and provider routes
   with runtime failover; remote discovery and health probes; per-user hidden models.
+- **OpenCode Go compatibility.** Chat requests now send the tenant session UUID as
+  `x-opencode-session` (required by Go routing) and a stable `chiron-agent/0.1` User-Agent
+  for both OpenAI- and Anthropic-compatible Go endpoints; Go presets use the documented
+  `opencode.ai/inference/go` endpoints and provider clients no longer follow redirects.
 - **Tenant workspace (`web/`).** Chat with streaming events, approvals, tools, reasoning,
   display preferences, message anchors and export/share; archive, memory, integrations,
   media, models, usage, audit, members and settings; zh/en strings and mock-data mode.
+  Per-conversation settings now cover tool authorization, reply style, reply language,
+  thinking language and reasoning effort (stored in session metadata).
 - **Operations and HA.** Workspace file API/panel, storage usage, local/WebDAV/S3 media,
   `/metrics`, failure/capacity Webhooks, scheduled backups, TLS ask/probe, platform-admin
   TOTP, Redis Sentinel failover, and multi-region main/standby (region binding, `PATCH
   region`, dump/restore failover scripts).
 - **Quality tooling.** i18n AST guard, CI web job, k6 scenarios, mock/local-capacity
   benchmark, and a 21-case read-only cross-tenant audit matrix.
-- **Release gates.** Playwright covers console login/TOTP, tenant creation, TLS probe and
-  invoice/reconciliation (`console/e2e`, 4 tests); CI runs a real `pg_dump`/`pg_restore`
-  backup drill.
+- **Release gates.** Playwright covers console login/TOTP, tenant creation, TLS probe,
+  invoice/reconciliation and Alipay/settings/media/provider flows (`console/e2e`, 7 tests);
+  an opt-in live test drives real login, tenant creation, invoice and settings against a
+  running server; CI runs a real `pg_dump`/`pg_restore` backup drill.
 - **Billing controls.** Plans gain `overage_policy` (`block` by default, `allow` to continue
   past monthly token/cost caps while usage stays billable); console displays it. Monthly
   invoice JSON adds plan + usage lines with an external payment status; a reconciliation
   endpoint compares control rollups with tenant `usage_events`/`runs` and reports drift;
   `POST /invoice/status` stores external payment callbacks; the console tenant page exposes
   invoice and reconciliation queries; a HMAC-signed `/billing/webhook` lets a payment
-  provider post status updates without an admin session.
+  provider post status updates without an admin session; Alipay RSA2 page-pay URL generation
+  and signed async notifications are supported; Alipay keys can be stored encrypted via
+  the platform console instead of env files; alert Webhook/thresholds and all four rate
+  limits are also console-configurable and hot-reload without restart; media WebDAV/S3
+  credentials and platform provider fallback keys are stored encrypted in the console.
 - **Region automation (partial).** `healthcheck.sh` reports primary/standby readiness and a
   keep/failover decision; `auto-failover.sh` requires consecutive failures and explicit
   `AUTO_FAILOVER=1`/`CONFIRM` before applying; `failover.sh` can call `DNS_SWITCH_HOOK` to
@@ -51,11 +62,23 @@ pre-1.0, breaking changes may land in minor releases.
 
 ### Changed
 
+- **`web_fetch` usability.** Connection resets/timeouts are retried up to three times
+  with fresh DNS validation per attempt; HTML responses are reduced to plain text before
+  hitting the model (scripts/styles/comments dropped, common entities decoded, default
+  20k-character cap via `CHIRON_WEB_TEXT_MAX_CHARS`) instead of forwarding up to 1 MiB of
+  markup that blew the 60k-token context budget. The server keeps standard
+  `HTTPS_PROXY`/`HTTP_PROXY` egress support for censored or NATed environments.
+- **Chat transcript fidelity.** Message history restores tool-card terminal status from
+  `tool_calls` and reuses the same `tool_call_id` as live `tool.call`/`tool.result`, so
+  reconnects no longer duplicate cards; stopping a run mid-answer persists the partial
+  text; tool-only assistant turns no longer render an "(empty message)" placeholder; the
+  stream replay handler treats `message.completed.tool_calls` as a count instead of
+  crashing on it.
 - `docs/` is consolidated around current behavior: ROADMAP is the single source for status
   and next tasks; API/deploy/PRD describe contracts and operations only.
 - Repository ships Apache-2.0 `LICENSE`, `NOTICE`, contributing/security/support policy,
   issue forms, PR template, CODEOWNERS and Dependabot.
-- Local validation notes: `cargo test --all` (438 tests), local main/standby drill
+- Local validation notes: `cargo test --all` (446 tests), local main/standby drill
   (JWT/Host + 50k-row restore), backup restore drill (6 critical tables PASS),
   21/21 cross-tenant audit, 10 concurrent run / 40 SSE baseline.
 - **Production hardening.** MCP stdio is deny-by-default (`CHIRON_MCP_COMMANDS` empty);

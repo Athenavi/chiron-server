@@ -522,8 +522,9 @@ export function useChatStream(sessionId: string): UseChatStreamResult {
           reasoningBufferRef.current.delete(id)
           const finalText = textFromContent(data.content)
           const fallbackName = t('chat.tool.fallbackName')
-          const finalCalls = (data.tool_calls ?? []).map((call, index) =>
-            toToolView(call, index, fallbackName),
+          // 服务端 `tool_calls` 只发数量（详细调用走 tool.call/tool.result 事件）。
+          const finalCalls = (Array.isArray(data.tool_calls) ? data.tool_calls : []).map(
+            (call, index) => toToolView(call, index, fallbackName),
           )
           setMessages((prev) =>
             prev.map((item) =>

@@ -92,6 +92,7 @@ pub struct RunRequest {
     pub run_id: Uuid,
     pub model: String,
     pub system_prompt: String,
+    pub reasoning_effort: Option<String>,
     pub history: Vec<ChatMessage>,
     pub tools: Toolset,
     pub budget: Budget,
@@ -167,6 +168,8 @@ pub async fn run_agent(req: RunRequest, deps: RunDeps) -> Result<RunOutcome, Age
         }
 
         let mut chat = ChatRequest::new(req.model.clone()).with_messages(messages.clone());
+        chat.session_id = Some(req.session_id.to_string());
+        chat.reasoning_effort = req.reasoning_effort.clone();
         chat.tools = tool_defs.clone();
         let mut stream = match provider.complete_stream(chat).await {
             Ok(stream) => stream,
@@ -187,6 +190,12 @@ pub async fn run_agent(req: RunRequest, deps: RunDeps) -> Result<RunOutcome, Age
             tokio::select! {
                 biased;
                 _ = control.cancel.cancelled() => {
+                    // 停止时保留已生成的部分正文，避免前端只剩一条空回复。
+                    let partial = assembler.text.trim();
+                    if !partial.is_empty() {
+                        sink.message_completed(message_id, &assembler.text, &assembler.usage, &[])
+                            .await?;
+                    }
                     sink.cancelled("interrupted").await?;
                     return Err(AgentError::Cancelled);
                 }
@@ -359,7 +368,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::agent::{tools::Toolset, web::WebClient, workspace::FakeSandbox};
+    use crate::agent::{control::Cancellation, tools::Toolset, web::WebClient, workspace::FakeSandbox};
     use crate::provider::openai::OpenAiProvider;
 
     #[derive(Default)]
@@ -367,6 +376,7 @@ mod tests {
         events: Mutex<Vec<(String, Value)>>,
         verdict: Mutex<Option<ApprovalVerdict>>,
         completed_tool_calls: Mutex<usize>,
+        cancel_on_delta: Mutex<Option<Cancellation>>,
     }
 
     impl RecordingSink {
@@ -375,7 +385,12 @@ mod tests {
                 events: Mutex::new(Vec::new()),
                 verdict: Mutex::new(Some(verdict)),
                 completed_tool_calls: Mutex::new(0),
+                cancel_on_delta: Mutex::new(None),
             })
+        }
+
+        fn cancel_on_delta(&self, cancel: Cancellation) {
+            *self.cancel_on_delta.lock().unwrap() = Some(cancel);
         }
 
         fn push(&self, kind: &str, data: Value) {
@@ -414,6 +429,9 @@ mod tests {
                 "message.delta",
                 json!({ "message_id": message_id, "delta": text }),
             );
+            if let Some(cancel) = self.cancel_on_delta.lock().unwrap().take() {
+                cancel.cancel();
+            }
             Ok(())
         }
 
@@ -593,6 +611,7 @@ mod tests {
             run_id: Uuid::new_v4(),
             model: "fake-model".into(),
             system_prompt: context::DEFAULT_SYSTEM_PROMPT.to_string(),
+            reasoning_effort: None,
             history: vec![ChatMessage::user("list the workspace")],
             tools: Toolset::allow_all(),
             budget: Budget::default(),
@@ -710,6 +729,32 @@ mod tests {
         let last = &bodies[1]["messages"].as_array().unwrap().last().unwrap();
         assert!(last["content"].as_str().unwrap().contains("rejected"));
         assert_eq!(last["role"], "tool");
+    }
+
+    #[tokio::test]
+    async fn cancellation_mid_stream_keeps_partial_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = Arc::new(FakeSandbox::new(dir.path().to_path_buf()));
+        let (base, _) = spawn_provider(vec![text_sse("partial answer")]).await;
+
+        let sink = RecordingSink::new(ApprovalVerdict::Allow);
+        let control = Arc::new(RunControl::default());
+        // 收到首段正文后取消，模拟用户在生成中途点停止。
+        sink.cancel_on_delta(control.cancel.clone());
+
+        let err = run_agent(request(), deps(&base, sink.clone(), sandbox, control))
+            .await
+            .expect_err("cancelled");
+        assert!(err.is_cancelled());
+
+        let completed = sink.find("message.completed");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0]["content"], "partial answer");
+        let kinds = sink.kinds();
+        let completed_at = kinds.iter().position(|k| k == "message.completed").unwrap();
+        let cancelled_at = kinds.iter().position(|k| k == "run.cancelled").unwrap();
+        assert!(completed_at < cancelled_at, "kinds: {kinds:?}");
+        assert!(!kinds.contains(&"run.completed".to_string()));
     }
 
     #[tokio::test]

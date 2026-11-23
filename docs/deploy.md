@@ -44,6 +44,8 @@ cp .env.team.example .env.team && chmod 600 .env.team
 | `JWT_SECRET` | ≥32 随机字符；占位值会拒绝启动，轮换等于让全部 token 失效 |
 | `CHIRON_METRICS_TOKEN` | 团队/服务模式必填；`/metrics` Bearer token |
 | `CHIRON_BILLING_WEBHOOK_SECRET` | 外部支付回写 HMAC 密钥；空=关闭 `/api/platform/v1/billing/webhook` |
+| `ALIPAY_APP_ID` / `ALIPAY_PRIVATE_KEY` / `ALIPAY_PUBLIC_KEY` | 支付宝应用与 RSA2 密钥；缺项则支付宝功能关闭；控制台“集成配置”优先于 env |
+| `ALIPAY_NOTIFY_URL` / `ALIPAY_RETURN_URL` / `ALIPAY_GATEWAY` | 异步通知、同步回跳与网关（默认生产网关）；控制台配置优先 |
 | `COOKIE_SECURE` | 团队/服务模式未设置时默认 `1`；纯 HTTP 回环调试显式设 `0` |
 | `POSTGRES_USER/PASSWORD/DB` | compose 内 DSN 由这三个值拼装，不要另写 `DATABASE_URL` |
 | `CONTROL_DATABASE_URL` | 控制库；compose 默认指向 `postgres:5432/chiron_control` |
@@ -57,14 +59,14 @@ cp .env.team.example .env.team && chmod 600 .env.team
 | `CHIRON_BACKUP_DIR` | `pg_dump` 输出目录（0700/0600）；空则备份接口禁用；物理删除默认要求先备份 |
 | `CHIRON_BACKUP_SECS` | 定时备份间隔；0（默认）关闭，最小值按 300s 生效；leader 租约 |
 | `CHIRON_BACKUP_KEEP_DAYS` | 自动删除早于 N 天的本租户 `.dump`；0=不删除 |
-| `CHIRON_ALERT_WEBHOOK_URL` | 备份/TLS/模型探测失败与容量阈值的 JSON Webhook；空=关闭 |
+| `CHIRON_ALERT_WEBHOOK_URL` | 告警 Webhook；控制台“系统配置”保存后优先于 env |
 | `CHIRON_REGION` | 部署区域标识；出现在 `/healthz`、`/metrics`，并作为新租户默认 region |
 | `CHIRON_REGION_STRICT` | 多区域严格绑定；开启后 region 为空/default 的租户返回 `503 tenant_wrong_region` |
 | `CHIRON_READ_ONLY` | 只读数据面；租户 API 仅允许 GET/HEAD/OPTIONS，写请求返回 `503 region_read_only` |
 | `CHIRON_REDIS_SENTINEL_URLS` | 逗号分隔 Sentinel 地址；非空时优先，自动热切换主节点 |
 | `CHIRON_REDIS_SENTINEL_MASTER` | Sentinel 主节点名（默认 `mymaster`） |
 | `CHIRON_REDIS_PASSWORD` | Sentinel 发现主节点的密码（可选） |
-| `CHIRON_ALERT_COOLDOWN_SECS` | 同类告警冷却秒数（默认 1800；0=不去重） |
+| `CHIRON_ALERT_COOLDOWN_SECS` | 同类告警冷却秒数（默认 1800；0=不去重）；控制台可覆盖 |
 | `CHIRON_ALERT_ACTIVE_RUNS` | 默认库活跃 run 告警阈值（0=关闭；跨阈值告警一次） |
 | `CHIRON_ALERT_TENANT_POOLS` | 缓存租户池告警阈值（0=关闭；跨阈值告警一次） |
 | `CHIRON_ALERT_EGRESS_DENIED` | 单窗口 egress 拒绝数告警阈值（0=关闭），用于发现异常外联 |
@@ -76,20 +78,20 @@ cp .env.team.example .env.team && chmod 600 .env.team
 | `CHIRON_EGRESS_ALLOW_PLAINTEXT` | 显式设为 1 才放行明文 HTTP:80；即使放行，携带 Authorization/Cookie/API key 的请求仍会被拒绝 |
 | `CHIRON_MEDIA_ROOT` | 媒体库根目录，默认 `<SANDBOX_DATA_ROOT>/media`，需持久化且可写 |
 | `CHIRON_MEDIA_BACKEND` | `local`（默认）/`webdav`/`s3`；缺配置时明确失败 |
-| `CHIRON_MEDIA_WEBDAV_URL` | WebDAV 基址（http/https，无 query/fragment）；`webdav` 后端必填 |
-| `CHIRON_MEDIA_WEBDAV_USERNAME/PASSWORD` | WebDAV Basic Auth（可选，需同时提供） |
-| `CHIRON_MEDIA_WEBDAV_PREFIX` | WebDAV 根下的可选路径前缀 |
-| `CHIRON_MEDIA_S3_BUCKET/REGION/ENDPOINT` | S3 桶、区域（默认 us-east-1）、自定义端点（MinIO 等） |
-| `CHIRON_MEDIA_S3_ACCESS_KEY/SECRET_KEY/SESSION_TOKEN` | SigV4 凭证；前两者必填，token 可选 |
-| `CHIRON_MEDIA_S3_PATH_STYLE/PREFIX` | 路径风格（自定义端点默认 true）与对象前缀 |
+| `CHIRON_MEDIA_WEBDAV_URL` | WebDAV 基址；控制台“系统配置”保存后优先 |
+| `CHIRON_MEDIA_WEBDAV_USERNAME/PASSWORD` | WebDAV Basic Auth；控制台可覆盖，密码不回显 |
+| `CHIRON_MEDIA_WEBDAV_PREFIX` | WebDAV 根下的可选路径前缀；控制台可覆盖 |
+| `CHIRON_MEDIA_S3_BUCKET/REGION/ENDPOINT` | S3 桶、区域、自定义端点；控制台可覆盖 |
+| `CHIRON_MEDIA_S3_ACCESS_KEY/SECRET_KEY/SESSION_TOKEN` | SigV4 凭证；控制台加密存储，env 兜底 |
+| `CHIRON_MEDIA_S3_PATH_STYLE/PREFIX` | 路径风格与对象前缀；控制台可覆盖 |
 | `SANDBOX_DOCKER_RUNTIME` / `SANDBOX_DATA_ROOT` / `SANDBOX_NETWORK` | 宿主 runtime、数据根（compose 同路径挂载）、默认网络；生产默认 `none`，需要出网用 `proxy` |
 | `CHIRON_MCP_COMMANDS` | MCP stdio 宿主命令白名单；默认空 = 全部拒绝，勿加入解释器/`docker` |
 | `DOCKER_GID` | `stat -c '%g' /var/run/docker.sock`；服务端以 UID 1000 运行，靠附加组访问 |
-| Provider key | `OPENAI_API_KEY` 等；仅作平台回落，租户 key 池优先；两者都没有时该 provider 不可用 |
+| Provider key | `OPENAI_API_KEY` 等；仅作平台回落，租户 key 池优先；控制台“系统配置”可保存加密的回落 key |
 | `CHIRON_DEFAULT_MODEL` / `CHIRON_DEFAULT_PROVIDER` | 未指定模型时的默认值；租户路由命中时以路由的 `upstream_model` 为准 |
 
 - 团队/服务模式强制 Redis（会话吊销）；`/readyz` 在团队模式下同时要求 Docker 可达。
-- 限流可选覆盖：`CHIRON_RL_HEAVY_BURST` / `CHIRON_RL_HEAVY_PER_MINUTE`（媒体上传/下载、MCP probe、市场安装、批量派生等重接口）。
+- 限流可选覆盖：`CHIRON_RL_HEAVY_BURST` / `CHIRON_RL_HEAVY_PER_MINUTE`（媒体上传/下载、MCP probe、市场安装、批量派生等重接口）；控制台“系统配置”可热更新四类限流。
 - 控制库由 `deploy/postgres/init-control.sql` 在 PG 卷首次初始化时创建；租户库由开通流程建。
 - 服务端启动时对内嵌迁移执行 `sqlx::migrate!`，不需要独立迁移容器。
 

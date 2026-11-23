@@ -90,14 +90,109 @@ pub struct SessionRow {
     pub project_id: Option<String>,
     pub model: Option<String>,
     pub status: String,
+    pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
 }
 
+/// 会话级对话偏好；缺失字段用安全默认值。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ConversationSettings {
+    /// ask（默认）| auto | readonly
+    pub tool_authorization: String,
+    /// concise | balanced（默认）| detailed
+    pub reply_style: String,
+    /// auto（默认）| zh | en
+    pub reply_language: String,
+    /// auto（默认）| zh | en
+    pub thinking_language: String,
+    /// auto（默认）| low | medium | high
+    pub reasoning_effort: String,
+}
+
+impl Default for ConversationSettings {
+    fn default() -> Self {
+        Self {
+            tool_authorization: "ask".into(),
+            reply_style: "balanced".into(),
+            reply_language: "auto".into(),
+            thinking_language: "auto".into(),
+            reasoning_effort: "auto".into(),
+        }
+    }
+}
+
+impl ConversationSettings {
+    pub fn from_metadata(metadata: &serde_json::Value) -> Self {
+        let parsed: ConversationSettings = metadata
+            .get("chat")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        parsed.validate().unwrap_or_default()
+    }
+
+    pub fn validate(self) -> Result<Self, AppError> {
+        for (label, value, allowed) in [
+            (
+                "tool_authorization",
+                self.tool_authorization.as_str(),
+                &["ask", "auto", "readonly"][..],
+            ),
+            (
+                "reply_style",
+                self.reply_style.as_str(),
+                &["concise", "balanced", "detailed"][..],
+            ),
+            (
+                "reply_language",
+                self.reply_language.as_str(),
+                &["auto", "zh", "en"][..],
+            ),
+            (
+                "thinking_language",
+                self.thinking_language.as_str(),
+                &["auto", "zh", "en"][..],
+            ),
+            (
+                "reasoning_effort",
+                self.reasoning_effort.as_str(),
+                &["auto", "low", "medium", "high"][..],
+            ),
+        ] {
+            if !allowed.contains(&value) {
+                return Err(AppError::bad_request(format!("invalid {label}")));
+            }
+        }
+        Ok(self)
+    }
+
+    pub fn prompt_suffix(&self) -> String {
+        let mut lines = Vec::new();
+        match self.reply_style.as_str() {
+            "concise" => lines.push("Reply concisely; omit filler and repeated context."),
+            "detailed" => lines.push("Give a thorough answer with reasoning, examples and edge cases."),
+            _ => {}
+        }
+        match self.reply_language.as_str() {
+            "zh" => lines.push("Reply in Chinese."),
+            "en" => lines.push("Reply in English."),
+            _ => {}
+        }
+        match self.thinking_language.as_str() {
+            "zh" => lines.push("Think through the problem in Chinese before answering."),
+            "en" => lines.push("Think through the problem in English before answering."),
+            _ => {}
+        }
+        lines.join("\n")
+    }
+}
+
 pub(crate) const SESSION_COLUMNS: &str = "id, tenant_id, user_id, parent_session_id, title, \
-     project_id, model, status, created_at, updated_at, archived_at, deleted_at";
+     project_id, model, status, metadata, created_at, updated_at, archived_at, deleted_at";
 
 /// 读取会话并做租户/所属校验；越权与不存在一律 404，避免泄露存在性。
 pub(crate) async fn load_session(

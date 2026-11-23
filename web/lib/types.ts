@@ -278,6 +278,7 @@ export interface ChatSession {
   project_id: string | null
   model: string | null
   status: SessionStatus
+  metadata?: { chat?: ConversationSettings; [key: string]: unknown }
   created_at: string
   updated_at: string
   archived_at: string | null
@@ -313,11 +314,34 @@ export interface CreateSessionResult {
 }
 
 /** PATCH 的线上字段是 `archived: boolean`；同时兼容 `status` 写法。 */
+export type ToolAuthorization = 'ask' | 'auto' | 'readonly'
+export type ReplyStyle = 'concise' | 'balanced' | 'detailed'
+export type ReplyLanguage = 'auto' | 'zh' | 'en'
+export type ThinkingLanguage = 'auto' | 'zh' | 'en'
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high'
+
+export interface ConversationSettings {
+  tool_authorization: ToolAuthorization
+  reply_style: ReplyStyle
+  reply_language: ReplyLanguage
+  thinking_language: ThinkingLanguage
+  reasoning_effort: ReasoningEffort
+}
+
+export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettings = {
+  tool_authorization: 'ask',
+  reply_style: 'balanced',
+  reply_language: 'auto',
+  thinking_language: 'auto',
+  reasoning_effort: 'auto',
+}
+
 export interface UpdateSessionRequest {
   title?: string
   model?: string
   status?: 'active' | 'archived'
   archived?: boolean
+  settings?: ConversationSettings
 }
 
 export interface UpdateSessionResult {

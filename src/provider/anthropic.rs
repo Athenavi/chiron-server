@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::{pin_mut, StreamExt};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, RETRY_AFTER};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, RETRY_AFTER, USER_AGENT};
 use serde_json::{json, Map, Value};
 
 use super::sse::{SseEvent, SseParser};
@@ -44,7 +44,10 @@ impl AnthropicProvider {
             headers: Vec::new(),
             timeout: Duration::from_secs(300),
             version: ANTHROPIC_VERSION.to_string(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -88,10 +91,11 @@ impl AnthropicProvider {
         }
     }
 
-    fn build_headers(&self) -> HeaderMap {
+    fn build_headers(&self, session_id: Option<&str>) -> HeaderMap {
         let mut headers = HeaderMap::new();
         // content-type 交给 `.json()`，避免重复头
         headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("chiron-agent/0.1"));
         headers.insert(
             HeaderName::from_static("anthropic-version"),
             HeaderValue::from_str(&self.version)
@@ -100,6 +104,15 @@ impl AnthropicProvider {
         if let Some(key) = &self.api_key {
             if let Ok(value) = HeaderValue::from_str(key) {
                 headers.insert(HeaderName::from_static("x-api-key"), value);
+            }
+        }
+        if self.id.starts_with("opencode-go") {
+            let session = session_id
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            if let Ok(value) = HeaderValue::from_str(&session) {
+                headers.insert(HeaderName::from_static("x-opencode-session"), value);
             }
         }
         for (name, value) in &self.headers {
@@ -142,6 +155,17 @@ impl AnthropicProvider {
         }
         if !request.stop.is_empty() {
             body.insert("stop_sequences".into(), json!(&request.stop));
+        }
+        if let Some(effort) = request.reasoning_effort.as_deref() {
+            let budget = match effort {
+                "low" => 1024,
+                "medium" => 4096,
+                _ => 8192,
+            };
+            body.insert(
+                "thinking".into(),
+                json!({ "type": "enabled", "budget_tokens": budget }),
+            );
         }
         for (key, value) in &request.extra {
             body.insert(key.clone(), value.clone());
@@ -435,7 +459,7 @@ impl Provider for AnthropicProvider {
         let response = self
             .client
             .post(format!("{}/messages", self.v1_root()))
-            .headers(self.build_headers())
+            .headers(self.build_headers(request.session_id.as_deref()))
             .timeout(self.timeout)
             .json(&body)
             .send()
@@ -497,7 +521,7 @@ impl Provider for AnthropicProvider {
         let response = self
             .client
             .get(format!("{}/models", self.v1_root()))
-            .headers(self.build_headers())
+            .headers(self.build_headers(None))
             .timeout(Duration::from_secs(30))
             .send()
             .await

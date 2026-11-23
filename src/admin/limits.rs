@@ -10,7 +10,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, RwLock},
     time::{Duration, Instant},
 };
 
@@ -214,16 +214,29 @@ struct Inner {
 }
 
 pub struct RateLimiter {
-    cfg: RateLimitConfig,
+    cfg: RwLock<RateLimitConfig>,
     inner: Mutex<Inner>,
 }
 
 impl RateLimiter {
     pub fn new(cfg: RateLimitConfig) -> Self {
         Self {
-            cfg,
+            cfg: RwLock::new(cfg),
             inner: Mutex::new(Inner::default()),
         }
+    }
+
+    pub fn set_config(&self, cfg: RateLimitConfig) {
+        if let Ok(mut current) = self.cfg.write() {
+            *current = cfg;
+        }
+    }
+
+    pub fn config(&self) -> RateLimitConfig {
+        self.cfg
+            .read()
+            .map(|cfg| cfg.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -254,7 +267,7 @@ impl RateLimiter {
             Scope::Tenant(id) => format!("{}:tenant:{id}", class.as_str()),
             Scope::Subject(s) => format!("{}:subject:{s}", class.as_str()),
         };
-        let (burst, per_minute) = scaled(class.policy(&self.cfg), scope);
+        let (burst, per_minute) = scaled(class.policy(&self.config()), scope);
 
         let mut inner = self.lock();
         inner.checks = inner.checks.wrapping_add(1);
@@ -318,6 +331,7 @@ pub fn class_for(method: &Method, path: &str) -> Option<RateClass> {
         }
         ["", "api", "v1", "media"]
         | ["", "api", "platform", "v1", "billing", "webhook"]
+        | ["", "api", "platform", "v1", "billing", "alipay", "notify"]
         | ["", "api", "v1", "mcp", "servers", _, "probe"]
         | ["", "api", "v1", "market", "items", _, "install"]
         | ["", "api", "v1", "sessions", _, "subagents"]
@@ -373,7 +387,7 @@ pub async fn enforce(State(state): State<Arc<AppState>>, req: Request, next: Nex
     let Some(class) = class_for(req.method(), req.uri().path()) else {
         return next.run(req).await;
     };
-    if !state.cfg.rate_limit.enabled {
+    if !state.limits.config().enabled {
         return next.run(req).await;
     }
     let actor = req.extensions().get::<CurrentUser>().cloned();

@@ -41,12 +41,17 @@ pub fn cooldown_allows(cooldown: u64, key: &str) -> bool {
 }
 
 pub fn notify(state: &AppState, kind: &str, tenant: Option<&str>, detail: &str) {
-    let url = state.cfg.alert_webhook_url.trim().to_string();
+    let settings = state
+        .alerts
+        .read()
+        .map(|value| value.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+    let url = settings.webhook_url.trim().to_string();
     if url.is_empty() {
         return;
     }
     let cooldown_key = format!("{kind}|{}", tenant.unwrap_or("-"));
-    if !cooldown_allows(state.cfg.alert_cooldown_secs, &cooldown_key) {
+    if !cooldown_allows(settings.cooldown_secs, &cooldown_key) {
         tracing::debug!(kind, tenant = ?tenant, "alert suppressed by cooldown");
         return;
     }
@@ -153,22 +158,30 @@ async fn default_active_runs(state: &AppState) -> i64 {
     .unwrap_or(0)
 }
 
-/// 容量看门狗：活跃 run、租户池与 egress 拒绝峰值跨阈值时告警。
+/// 容量看门狗：活跃 run、租户池与 egress 拒绝峰值跨阈值时告警；配置热更新。
 pub fn spawn_watchdog(state: Arc<AppState>) {
-    let runs_threshold = state.cfg.alert_active_runs;
-    let pools_threshold = state.cfg.alert_tenant_pools;
-    let egress_threshold = state.cfg.alert_egress_denied;
-    if state.cfg.alert_webhook_url.trim().is_empty()
-        || (runs_threshold == 0 && pools_threshold == 0 && egress_threshold == 0)
-    {
-        return;
-    }
     tokio::spawn(async move {
         let mut runs_alerted = false;
         let mut pools_alerted = false;
         let mut last_denied = state.runtime.egress_denied_total();
         loop {
             tokio::time::sleep(Duration::from_secs(WATCHDOG_SECS)).await;
+            let settings = state
+                .alerts
+                .read()
+                .map(|value| value.clone())
+                .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
+            let runs_threshold = settings.active_runs;
+            let pools_threshold = settings.tenant_pools;
+            let egress_threshold = settings.egress_denied;
+            if settings.webhook_url.trim().is_empty()
+                && runs_threshold == 0
+                && pools_threshold == 0
+                && egress_threshold == 0
+            {
+                last_denied = state.runtime.egress_denied_total();
+                continue;
+            }
             if runs_threshold > 0 {
                 let (active, ok, failed) = active_runs_total(&state).await;
                 let high = active as u64 >= runs_threshold;

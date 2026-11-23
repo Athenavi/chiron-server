@@ -113,9 +113,7 @@ export const MessageBubble = memo(function MessageBubble({ message, className }:
             <StreamingCursor label={t('chat.bubble.thinking')} />
             <span>{t('chat.bubble.thinking')}</span>
           </div>
-        ) : (
-          <p className="text-xs italic text-subtle">{t('chat.bubble.empty')}</p>
-        )}
+        ) : null}
 
         {hasTools ? (
           <div className="flex flex-col gap-2">

@@ -5,6 +5,8 @@ const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
   // 前台同源调用 /api/v1（Route Handler 反代到 Rust 服务），不使用 standalone 产物。
   poweredByHeader: false,
+  // Playwright/本地手动验收常用 127.0.0.1；Next dev 默认只信任 localhost。
+  allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     return [
       {

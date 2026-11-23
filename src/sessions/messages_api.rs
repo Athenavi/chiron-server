@@ -1,5 +1,6 @@
 //! 消息历史（cursor）与"提交一轮"（幂等键 + 创建 queued run）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::response::Response;
@@ -39,6 +40,17 @@ pub struct MessageRow {
 
 const MESSAGE_COLUMNS: &str = "id, session_id, turn_id, run_id, role, kind, content, created_at";
 
+/// 历史消息里带出的工具终态；实时事件不回放，刷新后靠它还原工具卡。
+#[derive(Debug, FromRow)]
+struct HistoryToolCall {
+    id: Uuid,
+    run_id: Uuid,
+    name: String,
+    status: String,
+    result: Option<Value>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListMessagesQuery {
     #[serde(default)]
@@ -75,7 +87,70 @@ pub async fn list_messages(
         limit,
         rows.last().map(|r| cursor::Cursor::new(r.created_at, r.id)),
     );
-    Ok(ok(json!({ "messages": rows, "next_cursor": next })))
+
+    // 工具卡的终态只存在 tool_calls 表里：按 run 取回，按调用名顺序配对进消息内容。
+    let run_ids: Vec<Uuid> = rows.iter().filter_map(|row| row.run_id).collect();
+    let tool_rows: Vec<HistoryToolCall> = if run_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT id, run_id, name, status, result, error FROM tool_calls \
+             WHERE session_id = $1 AND run_id = ANY($2) ORDER BY created_at, id",
+        )
+        .bind(id)
+        .bind(&run_ids)
+        .fetch_all(&state.db())
+        .await?
+    };
+    let mut pending_tools: HashMap<Uuid, Vec<HistoryToolCall>> = HashMap::new();
+    for tool in tool_rows {
+        pending_tools.entry(tool.run_id).or_default().push(tool);
+    }
+
+    let messages: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            let mut value = serde_json::to_value(&row).unwrap_or(Value::Null);
+            if let Some(run_id) = row.run_id {
+                if let Some(calls) = value
+                    .get_mut("content")
+                    .and_then(|content| content.get_mut("tool_calls"))
+                    .and_then(Value::as_array_mut)
+                {
+                    if let Some(queue) = pending_tools.get_mut(&run_id) {
+                        for call in calls {
+                            let Some(name) = call.get("name").and_then(Value::as_str) else {
+                                continue;
+                            };
+                            let Some(pos) =
+                                queue.iter().position(|tool| tool.name.as_str() == name)
+                            else {
+                                continue;
+                            };
+                            let done = queue.remove(pos);
+                            if let Some(object) = call.as_object_mut() {
+                                // 与实时 tool.call/tool.result 使用同一个 id，重连后不会重复成两张卡。
+                                object.insert(
+                                    "tool_call_id".into(),
+                                    Value::String(done.id.to_string()),
+                                );
+                                object.insert("status".into(), Value::String(done.status));
+                                if let Some(result) = done.result {
+                                    object.insert("result".into(), result);
+                                }
+                                if let Some(error) = done.error {
+                                    object.insert("error".into(), Value::String(error));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            value
+        })
+        .collect();
+
+    Ok(ok(json!({ "messages": messages, "next_cursor": next })))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

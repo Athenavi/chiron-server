@@ -27,6 +27,15 @@ cd web && npm run typecheck
 cd console && npm run build && npm run test:e2e   # Playwright
 ```
 
+真实前后端联调（临时 PostgreSQL/Redis + chiron-server）可用：
+
+```bash
+# 控制台需 CHIRON_DEV_PROXY=1 + NEXT_PUBLIC_DEV_PROXY=1 + CHIRON_API_ORIGIN
+cd console
+LIVE_URL=http://127.0.0.1:3100 LIVE_EMAIL=admin@chiron.local LIVE_PASSWORD=... \
+  npx playwright test e2e/live.spec.ts
+```
+
 On Windows, `scripts\check.cmd` runs the same sequence with `fmt --check` instead.
 
 ## What a good change looks like

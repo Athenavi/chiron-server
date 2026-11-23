@@ -28,6 +28,49 @@ function json(route: Route, body: Json, status = 200) {
 async function mockConsoleApi(page: Page) {
   let totpEnabled = false
   let tlsStatus = 'pending'
+  let alipay = {
+    app_id: '',
+    notify_url: '',
+    return_url: '',
+    gateway: 'https://openapi.alipay.com/gateway.do',
+    has_private_key: false,
+    has_public_key: false,
+    configured: false,
+    stored_in_db: [] as string[],
+    secrets_key_configured: true,
+  }
+  let alerts = {
+    webhook_configured: false,
+    cooldown_secs: 1800,
+    active_runs: 0,
+    tenant_pools: 0,
+    egress_denied: 0,
+  }
+  let rates = {
+    enabled: true,
+    login: { burst: 10, per_minute: 10 },
+    submit: { burst: 10, per_minute: 30 },
+    tool: { burst: 30, per_minute: 120 },
+    heavy: { burst: 4, per_minute: 20 },
+  }
+  let media = {
+    backend: 'local',
+    webdav: { url: '', username: '', prefix: '', has_password: false },
+    s3: {
+      bucket: '',
+      region: '',
+      endpoint: null as string | null,
+      path_style: null as boolean | null,
+      prefix: null as string | null,
+      has_access_key: false,
+      has_secret_key: false,
+      has_session_token: false,
+    },
+  }
+  let providers = [
+    { id: 'openai', label: 'OpenAI', requires_key: true, configured: false, stored_in_db: false },
+    { id: 'anthropic', label: 'Anthropic', requires_key: true, configured: false, stored_in_db: false },
+  ]
   await page.route('**/api/platform/v1/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -84,6 +127,83 @@ async function mockConsoleApi(page: Page) {
     }
     if (path === '/api/platform/v1/tenants' && method === 'POST') {
       return json(route, { data: tenant })
+    }
+    if (path === '/api/platform/v1/settings/integrations/alipay' && method === 'GET') {
+      return json(route, { data: { alipay } })
+    }
+    if (path === '/api/platform/v1/settings/integrations/alipay' && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, string>
+      alipay = {
+        ...alipay,
+        app_id: body.app_id ?? alipay.app_id,
+        notify_url: body.notify_url ?? alipay.notify_url,
+        return_url: body.return_url ?? alipay.return_url,
+        gateway: body.gateway ?? alipay.gateway,
+        has_private_key: alipay.has_private_key || Boolean(body.private_key),
+        has_public_key: alipay.has_public_key || Boolean(body.public_key),
+        configured: true,
+        stored_in_db: ['alipay_app_id', 'alipay_notify_url'],
+      }
+      return json(route, { data: { alipay } })
+    }
+    if (path === '/api/platform/v1/settings/alerts' && method === 'GET') {
+      return json(route, { data: alerts })
+    }
+    if (path === '/api/platform/v1/settings/alerts' && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, string | number>
+      alerts = {
+        ...alerts,
+        webhook_configured: Boolean(body.webhook_url) || alerts.webhook_configured,
+        cooldown_secs: Number(body.cooldown_secs ?? alerts.cooldown_secs),
+        active_runs: Number(body.active_runs ?? alerts.active_runs),
+        tenant_pools: Number(body.tenant_pools ?? alerts.tenant_pools),
+        egress_denied: Number(body.egress_denied ?? alerts.egress_denied),
+      }
+      return json(route, { data: alerts })
+    }
+    if (path === '/api/platform/v1/settings/rate-limits' && method === 'GET') {
+      return json(route, { data: rates })
+    }
+    if (path === '/api/platform/v1/settings/rate-limits' && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, number>
+      rates = {
+        enabled: true,
+        login: { burst: body.login_burst ?? rates.login.burst, per_minute: body.login_per_minute ?? rates.login.per_minute },
+        submit: { burst: body.submit_burst ?? rates.submit.burst, per_minute: body.submit_per_minute ?? rates.submit.per_minute },
+        tool: { burst: body.tool_burst ?? rates.tool.burst, per_minute: body.tool_per_minute ?? rates.tool.per_minute },
+        heavy: { burst: body.heavy_burst ?? rates.heavy.burst, per_minute: body.heavy_per_minute ?? rates.heavy.per_minute },
+      }
+      return json(route, { data: rates })
+    }
+    if (path === '/api/platform/v1/settings/media' && method === 'GET') {
+      return json(route, { data: media })
+    }
+    if (path === '/api/platform/v1/settings/media' && method === 'PUT') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      media = {
+        ...media,
+        backend: String(body.backend ?? media.backend),
+        webdav: {
+          ...media.webdav,
+          url: String(body.webdav_url ?? media.webdav.url),
+          username: String(body.webdav_username ?? media.webdav.username),
+          prefix: String(body.webdav_prefix ?? media.webdav.prefix),
+          has_password: media.webdav.has_password || Boolean(body.webdav_password),
+        },
+      }
+      return json(route, { data: media })
+    }
+    if (path === '/api/platform/v1/settings/providers' && method === 'GET') {
+      return json(route, { data: { providers } })
+    }
+    if (path === '/api/platform/v1/settings/providers' && method === 'PUT') {
+      const body = request.postDataJSON() as { keys?: Record<string, string> }
+      for (const [id, key] of Object.entries(body.keys ?? {})) {
+        providers = providers.map(item =>
+          item.id === id ? { ...item, configured: Boolean(key), stored_in_db: Boolean(key) } : item,
+        )
+      }
+      return json(route, { data: { providers } })
     }
     if (path === '/api/platform/v1/tenants/t1' && method === 'GET') {
       return json(route, { data: { tenant } })
@@ -192,4 +312,38 @@ test('enables TOTP and shows one-time recovery codes', async ({ page }) => {
   await page.locator('input[autocomplete="one-time-code"]').fill('123456')
   await page.getByRole('button', { name: '确认启用' }).click()
   await expect(page.getByText('AAAAA-BBBBB')).toBeVisible()
+})
+
+test('saves Alipay integration settings', async ({ page }) => {
+  await page.goto('/integrations')
+  await page.locator('input').nth(0).fill('2021000000000000')
+  await page.locator('input').nth(1).fill('https://platform.example.com/api/platform/v1/billing/alipay/notify')
+  await page.locator('input').nth(2).fill('https://platform.example.com/return')
+  await page.locator('textarea').nth(0).fill('-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----')
+  await page.locator('textarea').nth(1).fill('-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----')
+  await page.getByRole('button', { name: '保存配置' }).click()
+  await expect(page.getByText('配置已保存')).toBeVisible()
+  await expect(page.getByText('已配置')).toBeVisible()
+})
+
+test('saves alert and rate settings', async ({ page }) => {
+  await page.goto('/settings')
+  await page.locator('input').nth(0).fill('https://hooks.example.com/chiron')
+  await page.locator('form').nth(0).getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('告警配置已保存')).toBeVisible()
+  await page.locator('form').nth(1).getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('限流配置已保存')).toBeVisible()
+})
+
+test('saves media and provider fallback settings', async ({ page }) => {
+  await page.goto('/settings')
+  await page.locator('form').nth(2).locator('select').selectOption('webdav')
+  await page.locator('form').nth(2).locator('input').nth(0).fill('https://dav.example.com')
+  await page.locator('form').nth(2).getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('媒体存储配置已保存')).toBeVisible()
+
+  await page.locator('form').nth(3).locator('select').selectOption('openai')
+  await page.locator('form').nth(3).locator('input[type="password"]').fill('sk-platform-test')
+  await page.locator('form').nth(3).getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('Provider key 已保存')).toBeVisible()
 })

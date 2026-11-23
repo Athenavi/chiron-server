@@ -10,16 +10,17 @@
  * 保存调用 `onRename`，模型切换调用 `onModelChange`，两者都由聊天页负责落库。
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Key } from 'react'
 import { Button, Chip, Dropdown, Input, TextField, toast } from '@heroui/react'
 import { api } from '@/lib/api'
-import { ApiError, type ChatSession } from '@/lib/types'
+import { ApiError, DEFAULT_CONVERSATION_SETTINGS, type ChatSession, type ConversationSettings } from '@/lib/types'
 import { useI18n } from '@/lib/i18n'
 import { ThemeSwitcher } from '@/components/theme/ThemeSwitcher'
 import { ModelPicker } from '@/components/chat/ModelPicker'
 import { DisplaySettingsDialog } from '@/components/chat/DisplaySettingsDialog'
+import { ConversationSettingsDialog } from '@/components/chat/ConversationSettingsDialog'
 import { SessionRunsPanel } from '@/components/chat/SessionRunsPanel'
 import { exportSession, shareSession } from '@/lib/session-export'
 import {
@@ -69,9 +70,18 @@ export function ChatHeader({
   const [exporting, setExporting] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [displayOpen, setDisplayOpen] = useState(false)
+  const [conversationOpen, setConversationOpen] = useState(false)
+  const [conversation, setConversation] = useState<ConversationSettings | null>(null)
   const [runsOpen, setRunsOpen] = useState(false)
   const cancelledRef = useRef(false)
   const menuButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useEffect(() => {
+    setConversation(null)
+  }, [session?.id])
+
+  const conversationSettings =
+    conversation ?? session?.metadata?.chat ?? DEFAULT_CONVERSATION_SETTINGS
 
   function startEditing() {
     if (!session) return
@@ -199,6 +209,10 @@ export function ChatHeader({
     }
     if (key === 'display') {
       setDisplayOpen(true)
+      return
+    }
+    if (key === 'conversation') {
+      setConversationOpen(true)
       return
     }
     if (key === 'runs') {
@@ -339,6 +353,10 @@ export function ChatHeader({
                 <ShareIcon size={14} />
                 <span className="truncate">{t('chat.sessionActions.share')}</span>
               </Dropdown.Item>
+              <Dropdown.Item id="conversation" textValue={t('chat.conversation.title')}>
+                <SlidersIcon size={14} />
+                <span className="truncate">{t('chat.conversation.title')}</span>
+              </Dropdown.Item>
               <Dropdown.Item id="display" textValue={t('chat.display.title')}>
                 <SlidersIcon size={14} />
                 <span className="truncate">{t('chat.display.title')}</span>
@@ -358,6 +376,12 @@ export function ChatHeader({
       </header>
 
       <DisplaySettingsDialog isOpen={displayOpen} onOpenChange={setDisplayOpen} />
+      <ConversationSettingsDialog
+        session={session ? { ...session, metadata: { ...(session.metadata ?? {}), chat: conversationSettings } } : null}
+        isOpen={conversationOpen}
+        onOpenChange={setConversationOpen}
+        onSaved={setConversation}
+      />
       <SessionRunsPanel
         session={session}
         isOpen={runsOpen}

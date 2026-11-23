@@ -126,9 +126,8 @@ Agent 运行期失败写在 `run.failed` 事件的 `data.code` 里，取值包�
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | GET / POST | `/sessions` | 列表 / 新建（`title`、`model`、`project_id`、`parent_session_id`）；`project_id` 仅 `[A-Za-z0-9_-]{1,64}` |
-| GET / PATCH / DELETE | `/sessions/{id}` | 详情 / 改名与归档 / 删除 |
-| GET / POST | `/sessions/{id}/messages` | 历史 / 提交消息（`content`、`model`、`client_id`）→ 返回 `run_id` |
-| GET | `/sessions/{id}/events` | SSE（见 §6） |
+| GET / PATCH / DELETE | `/sessions/{id}` | 详情 / 改名、归档、`settings` 对话偏好 / 删除 |
+| GET / POST | `/sessions/{id}/messages` | 历史 / 提交消息（`content`、`model`、`client_id`）→ 返回 `run_id` || GET | `/sessions/{id}/events` | SSE（见 §6） |
 | GET | `/sessions/{id}/container` | 当前会话沙箱容器状态 |
 | GET | `/sessions/{id}/files?path=&limit=` | 工作区目录列表（`{path, entries, truncated}`，limit 1..500） |
 | GET | `/sessions/{id}/files/download?path=` | 下载工作区常规文件（≤50 MiB，流式，附件） |
@@ -141,6 +140,11 @@ Agent 运行期失败写在 `run.failed` 事件的 `data.code` 里，取值包�
 
 `GET /sessions` 的每个会话附带 `active_run`（没有则为 `null`）与 `pending_approvals`；
 响应顶层另有 `pending_approvals_total`（当前用户可见范围内全部待审批数），供侧栏徽标使用。
+
+会话级 `settings`（PATCH）写入 `metadata.chat`，支持
+`tool_authorization`（ask/auto/readonly）、`reply_style`（concise/balanced/detailed）、
+`reply_language`（auto/zh/en）、`thinking_language`（auto/zh/en）、
+`reasoning_effort`（auto/low/medium/high）；下一轮 run 生效。
 
 工作区文件接口与会话沙箱同源路径（`<SANDBOX_DATA_ROOT>/<tenant>/<user>[/<project>]`）：
 绝对路径、`..`、NUL、越界符号链接一律拒绝；只读常规文件，GET 不会创建工作区目录。
@@ -233,12 +237,19 @@ Docker 为必需，返回 `503` 表示依赖不可用；`/readyz` 同时返回 `
 | GET | `/tenants/{id}/bill` | 月度账单汇总（缺省当月，含 totals/days） |
 | GET | `/tenants/{id}/bill.csv` | 月度账单 CSV 下载 |
 | GET | `/tenants/{id}/invoice?month=YYYY-MM` | 发票数据（套餐费+用量费；读取外部支付状态） |
+| POST | `/tenants/{id}/invoice/pay` | `{month?}`：生成支付宝 RSA2 收银台 URL，并写入 pending 状态 |
 | POST | `/tenants/{id}/invoice/status` | 外部支付回写：`{month,status,provider?,external_id?,amount_cents?,paid_at?}` |
 | GET | `/tenants/{id}/bill/reconcile?month=YYYY-MM` | 控制库 rollup 与租户库原始用量/runs 对账，返回 `drift` |
 | GET | `/usage` | 按租户/日汇总（`tenant_usage_daily`） |
 | GET | `/usage/export.csv?days=` | 用量 CSV 下载（1..366 天，默认 90），用于账单对账 |
 | POST | `/usage/rollup` | `{days?}` 重算窗口（覆盖写，可重复执行） |
 | POST | `/billing/webhook` | 外部支付回写（`X-Chiron-Signature: sha256=<hmac>`，无需管理员会话） |
+| POST | `/billing/alipay/notify` | 支付宝异步通知；RSA2 验签、金额/租户/月份校验后返回 `success` |
+| GET / PUT | `/settings/integrations/alipay` | 支付宝配置（GET 不回显密钥；PUT 只更新提供的字段，空值清除） |
+| GET / PUT | `/settings/alerts` | 告警 Webhook/冷却/阈值；热更新，不回显 Webhook URL |
+| GET / PUT | `/settings/rate-limits` | 登录/提交/工具/重接口限流；热更新 |
+| GET / PUT | `/settings/media` | 媒体 local/WebDAV/S3 配置；密钥不回显，后台优先于 env |
+| GET / PUT | `/settings/providers` | 平台级 provider 回落 key 列表/更新；租户 BYOK 仍优先 |
 | GET | `/regions` | 本地区域、控制库租户分布、未绑定区域租户数与 Redis 健康 |
 | POST | `/regions/backfill` | `{region,dry_run?}`：把空/default region 的租户绑到指定区域（默认 dry-run） |
 | GET | `/audit` | 平台审计 |

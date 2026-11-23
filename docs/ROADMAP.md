@@ -10,7 +10,7 @@
 - **租户前台**：聊天（流式/审批/工具/推理/显示偏好/锚点/导出分享）、归档、记忆、集成、媒体、模型、用量、审计、成员、设置。
 - **平台控制台**：租户、套餐、用量、迁移、域名/TLS、BYOK、平台管理员 TOTP。
 - **运维与 HA**：工作区文件、存储用量、S3/WebDAV、`/metrics`、告警、定时备份、Redis Sentinel、多区域主备。
-- **已验证**：438 项后端测试；本地主备切区（JWT/Host）、21/21 跨租户审计、10 并发 run/40 SSE 基线。
+- **已验证**：442 项后端测试；本地主备切区（JWT/Host）、21/21 跨租户审计、10 并发 run/40 SSE 基线。
 - **生产加固**：MCP/沙箱/egress 默认拒绝、配置占位值拒绝、local-session 代理绕过、
   TOTP 防重放、迁移锁、备份原子性与权限、容器/任务租户隔离、SSRF DNS 固定、删除前备份、
   媒体校验、SSE 上限、登录共享限流、集成对象写权限、project_id 校验、导出脱敏、
@@ -45,11 +45,11 @@
 
 | # | 任务 | 验收 | 主要文件 |
 | :--- | :--- | :--- | :--- |
-| P1-1 | 计费账单 | 账单汇总/CSV、发票 JSON+外部支付状态回写、套餐 `overage_policy`、rollup 对账已交付；具体支付渠道仍由外部系统接入 | `src/control/usage_rollup.rs`、平台 API |
+| P1-1 | 计费账单 | 账单/CSV、发票 JSON+状态回写、套餐 `overage_policy`、rollup 对账、支付宝 RSA2 下单/异步通知、控制台集成配置已交付；生产商户参数待录入 | `src/control/usage_rollup.rs`、平台 API |
 | P1-2 | ✅ TOTP 恢复与锁定防护 | 一次性恢复码、平台管理员重置流程、失败限速 | `src/control/mod.rs`、`console/` |
-| P1-3 | ✅ 指标与告警收敛 | `/metrics` Bearer/反代白名单文档化；告警冷却窗口 | `src/metrics.rs`、`src/alerts.rs` |
-| P1-4 | ✅ 存储配额准确性 | 媒体+工作区统一计数；S3/WebDAV 迁移与孤儿清理 | `src/control/usage_rollup.rs`、`src/media/` |
-| P1-5 | ✅ 控制台 i18n 与 E2E | zh/en + Playwright 覆盖登录、建租户、TLS、TOTP、发票/对账（4/4 通过） | `console/` |
+| P1-3 | ✅ 指标与告警收敛 | `/metrics` Bearer/反代白名单；告警冷却；控制台可热更新 Webhook/阈值与限流 | `src/metrics.rs`、`src/alerts.rs` |
+| P1-4 | ✅ 存储配额准确性 | 媒体+工作区统一计数；S3/WebDAV 迁移与孤儿清理；存储凭证后台加密配置 | `src/control/usage_rollup.rs`、`src/media/` |
+| P1-5 | ✅ 控制台 i18n 与 E2E | zh/en + Playwright 覆盖登录、建租户、TLS、TOTP、发票/对账、支付宝/告警/限流/媒体/Provider 配置（7/7）；另有真实后端 live 用例 | `console/` |
 | P1-6 | ✅ 迁移安全 | 升级前备份门禁；CI 真实 dump/restore 校验 | `src/control/tenant_migrations.rs`、CI |
 
 ### P2：规模化

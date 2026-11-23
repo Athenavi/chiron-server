@@ -1,7 +1,11 @@
 //! preset 目录与能力矩阵（B3b）：复用 `crate::providers::PRESETS` 的 27 个 preset，
 //! 把"目录里的静态元数据"转成"可发请求的实例"，并把套餐/协议差异收敛到这里的函数上。
 
-use std::{env, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    sync::{Arc, OnceLock, RwLock},
+};
 
 use super::{
     anthropic::AnthropicProvider, merge_models, openai::OpenAiProvider, ModelInfo, Provider,
@@ -70,6 +74,33 @@ fn env_non_empty(name: &str) -> Option<String> {
     }
 }
 
+static PLATFORM_KEYS: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+
+fn platform_keys() -> &'static RwLock<HashMap<String, String>> {
+    PLATFORM_KEYS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// 后台配置的平台回落 key（不含租户 BYOK）；空值表示未配置。
+pub fn set_platform_keys(keys: HashMap<String, String>) {
+    if let Ok(mut current) = platform_keys().write() {
+        *current = keys
+            .into_iter()
+            .filter(|(_, value)| !value.trim().is_empty())
+            .collect();
+    }
+}
+
+pub fn platform_key(id: &str) -> Option<String> {
+    platform_keys()
+        .read()
+        .ok()
+        .and_then(|keys| keys.get(id).cloned())
+}
+
+pub fn platform_key_configured(id: &str) -> bool {
+    platform_key(id).is_some()
+}
+
 pub fn resolve(id: &str) -> Result<ResolvedProvider, ProviderError> {
     resolve_with(id, None, None)
 }
@@ -98,6 +129,7 @@ pub fn resolve_with(
     let api_key = api_key_override
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(|| platform_key(preset.id))
         .or_else(|| env_non_empty(preset.api_key_env));
 
     Ok(ResolvedProvider {

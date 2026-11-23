@@ -4,14 +4,14 @@
 //! 平台 API 只允许平台 Host 访问；租户 Host 命中 `/api/platform/*` 一律 404。
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 use axum::{
     body::Bytes,
-    extract::{FromRequestParts, Path, Query, Request, State},
+    extract::{Form, FromRequestParts, Path, Query, Request, State},
     http::{header::HOST, request::Parts, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -35,12 +35,14 @@ use crate::{
     state::AppState,
 };
 
+pub mod alipay;
 pub mod backup;
 pub mod byok;
 pub mod crypto;
 pub mod domains;
 pub mod lifecycle;
 pub mod provision;
+pub mod settings;
 pub mod tenant_migrations;
 pub mod usage_rollup;
 
@@ -390,6 +392,26 @@ async fn platform_host_guard(
 pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     let protected = Router::new()
         .route("/api/platform/v1/me", get(me))
+        .route(
+            "/api/platform/v1/settings/integrations/alipay",
+            get(settings::get_alipay).put(settings::put_alipay),
+        )
+        .route(
+            "/api/platform/v1/settings/alerts",
+            get(settings::get_alerts).put(settings::put_alerts),
+        )
+        .route(
+            "/api/platform/v1/settings/rate-limits",
+            get(settings::get_rates).put(settings::put_rates),
+        )
+        .route(
+            "/api/platform/v1/settings/media",
+            get(settings::get_media).put(settings::put_media),
+        )
+        .route(
+            "/api/platform/v1/settings/providers",
+            get(settings::get_providers).put(settings::put_providers),
+        )
         .route("/api/platform/v1/me/totp/setup", post(totp_setup))
         .route("/api/platform/v1/me/totp/enable", post(totp_enable))
         .route("/api/platform/v1/me/totp/disable", post(totp_disable))
@@ -470,6 +492,10 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
             post(invoice_status),
         )
         .route(
+            "/api/platform/v1/tenants/{id}/invoice/pay",
+            post(alipay_pay),
+        )
+        .route(
             "/api/platform/v1/tenants/{id}/bill/reconcile",
             get(tenant_bill_reconcile),
         )
@@ -494,6 +520,7 @@ pub fn router(state: Arc<AppState>) -> Router<Arc<AppState>> {
     // 支付渠道回写：HMAC 鉴权，不依赖平台管理员会话。
     let webhook = Router::new()
         .route("/api/platform/v1/billing/webhook", post(billing_webhook))
+        .route("/api/platform/v1/billing/alipay/notify", post(alipay_notify))
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1808,6 +1835,187 @@ async fn invoice_status(
         "amount_cents": body.amount_cents,
         "paid_at": body.paid_at,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct InvoicePayBody {
+    #[serde(default)]
+    month: Option<String>,
+}
+
+async fn invoice_total_cents(
+    state: &AppState,
+    tenant: &TenantRow,
+    id: Uuid,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+) -> Result<i64, AppError> {
+    let control = state.control.as_ref().ok_or_else(control_unavailable)?;
+    let price: i32 = sqlx::query_scalar("SELECT price_cents FROM plans WHERE id = $1")
+        .bind(&tenant.plan_id)
+        .fetch_one(&control.db)
+        .await?;
+    let usage = bill_totals(&bill_rows(state, id, start, end).await?).3;
+    Ok(i64::from(price).saturating_add(usage))
+}
+
+async fn alipay_pay(
+    State(state): State<Arc<AppState>>,
+    _admin: PlatformAdmin,
+    Path(id): Path<Uuid>,
+    body: Result<Json<InvoicePayBody>, axum::extract::rejection::JsonRejection>,
+) -> ApiResult<Response> {
+    let Json(body) = body.map_err(AppError::invalid_body)?;
+    let alipay_cfg = settings::load_alipay(&state).await?;
+    if !alipay_cfg.configured() {
+        return Err(AppError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "alipay_disabled",
+            "configure Alipay in the platform console or ALIPAY_* env vars",
+        ));
+    }
+    let control = state.control.as_ref().ok_or_else(control_unavailable)?;
+    let tenant = fetch_tenant(&control.db, id).await?;
+    let (month, start, end) = bill_month(body.month.as_deref())?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM tenant_invoice_status WHERE tenant_id = $1 AND month = $2",
+    )
+    .bind(id)
+    .bind(&month)
+    .fetch_optional(&control.db)
+    .await?;
+    if current.as_deref() == Some("paid") {
+        return Err(AppError::conflict("invoice is already paid"));
+    }
+    let total = invoice_total_cents(&state, &tenant, id, start, end).await?;
+    if total <= 0 {
+        return Err(AppError::bad_request("invoice total must be positive"));
+    }
+    let out_trade_no = alipay::out_trade_no(id, &month);
+    let subject = format!("Chiron {} {}", tenant.slug, month);
+    let pay_url = alipay::page_pay_url(
+        &alipay_cfg.app_id,
+        &alipay_cfg.private_key,
+        &alipay_cfg.gateway,
+        &alipay_cfg.notify_url,
+        &alipay_cfg.return_url,
+        &out_trade_no,
+        total,
+        &subject,
+    )
+    .map_err(|e| AppError::internal(format!("alipay sign failed: {e}")))?;
+    upsert_invoice_status(
+        &control.db,
+        id,
+        &month,
+        "alipay",
+        &out_trade_no,
+        "pending",
+        total,
+        None,
+    )
+    .await?;
+    Ok(ok(json!({
+        "tenant_id": id,
+        "month": month,
+        "out_trade_no": out_trade_no,
+        "total_cents": total,
+        "pay_url": pay_url,
+    })))
+}
+
+async fn alipay_notify(
+    State(state): State<Arc<AppState>>,
+    Form(params): Form<BTreeMap<String, String>>,
+) -> ApiResult<Response> {
+    let alipay_cfg = settings::load_alipay(&state).await?;
+    if !alipay_cfg.configured() {
+        return Err(AppError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "alipay_disabled",
+            "alipay is not configured",
+        ));
+    }
+    if !alipay::verify_notify(&alipay_cfg.public_key, &params) {
+        return Err(AppError::unauthorized("invalid alipay signature"));
+    }
+    if params.get("app_id").map(String::as_str) != Some(alipay_cfg.app_id.trim()) {
+        return Err(AppError::unauthorized("alipay app_id mismatch"));
+    }
+    let out_trade_no = params
+        .get("out_trade_no")
+        .ok_or_else(|| AppError::bad_request("missing out_trade_no"))?;
+    let (tenant_id, month) = alipay::parse_out_trade_no(out_trade_no)
+        .ok_or_else(|| AppError::bad_request("invalid out_trade_no"))?;
+    let trade_status = params
+        .get("trade_status")
+        .ok_or_else(|| AppError::bad_request("missing trade_status"))?;
+    let status = alipay::notify_status(trade_status)
+        .ok_or_else(|| AppError::bad_request("unknown trade_status"))?;
+    let amount = alipay::yuan_to_cents(
+        params
+            .get("total_amount")
+            .map(String::as_str)
+            .unwrap_or_default(),
+    )
+    .ok_or_else(|| AppError::bad_request("invalid total_amount"))?;
+    let control = state.control.as_ref().ok_or_else(control_unavailable)?;
+    let tenant = fetch_tenant(&control.db, tenant_id).await?;
+    let (month, start, end) = bill_month(Some(&month))?;
+    let stored: Option<i64> = sqlx::query_scalar(
+        "SELECT amount_cents FROM tenant_invoice_status WHERE tenant_id = $1 AND month = $2",
+    )
+    .bind(tenant_id)
+    .bind(&month)
+    .fetch_optional(&control.db)
+    .await?;
+    // 以创建支付单时的金额为准，避免支付期间 rollup 变化导致合法通知被拒。
+    let expected = match stored {
+        Some(amount) if amount > 0 => amount,
+        _ => invoice_total_cents(&state, &tenant, tenant_id, start, end).await?,
+    };
+    if amount != expected {
+        return Err(AppError::bad_request("alipay amount does not match invoice"));
+    }
+    let trade_no = params
+        .get("trade_no")
+        .map(String::as_str)
+        .unwrap_or(out_trade_no);
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM tenant_invoice_status WHERE tenant_id = $1 AND month = $2",
+    )
+    .bind(tenant_id)
+    .bind(&month)
+    .fetch_optional(&control.db)
+    .await?;
+    if existing.as_deref() == Some("refunded")
+        || (existing.as_deref() == Some("paid") && matches!(status, "pending" | "failed"))
+    {
+        // 乱序/重复通知不能把已支付或已退款状态降级。
+        return Ok((StatusCode::OK, "success").into_response());
+    }
+    upsert_invoice_status(
+        &control.db,
+        tenant_id,
+        &month,
+        "alipay",
+        trade_no,
+        status,
+        amount,
+        (status == "paid").then(Utc::now),
+    )
+    .await?;
+    platform_audit(
+        &state,
+        None,
+        "alipay",
+        "tenant_invoice_status",
+        Some(tenant_id),
+        &format!("month={month} status={status} trade_no={trade_no}"),
+        "",
+    )
+    .await;
+    Ok((StatusCode::OK, "success").into_response())
 }
 
 async fn regions(
