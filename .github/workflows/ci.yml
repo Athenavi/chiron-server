@@ -37,7 +37,7 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379/0
       JWT_SECRET: ci-secret-0123456789abcdef0123456789abcdef
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -51,7 +51,7 @@ jobs:
   migrations:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Migration versions are unique and ordered
         run: |
           python - <<'PY'
@@ -76,7 +76,7 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -94,7 +94,7 @@ jobs:
       run:
         working-directory: console
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -109,7 +109,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build server image
         run: docker build -f deploy/server/Dockerfile -t chiron-server:ci .
       - name: Build sandbox agent image
@@ -134,7 +134,7 @@ jobs:
     env:
       PGPASSWORD: chiron
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
       - name: Seed a tenant database
