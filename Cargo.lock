@@ -331,7 +331,7 @@ dependencies = [
  "http-body-util",
  "jsonwebtoken",
  "mime",
- "rand 0.8.8",
+ "rand 0.10.4",
  "redis",
  "reqwest",
  "rsa",
