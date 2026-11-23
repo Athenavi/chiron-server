@@ -22,8 +22,8 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-argon2 = "0.5"
-jsonwebtoken = "9"
+argon2 = "0.6"
+jsonwebtoken = "12"
 rand = "0.8"
 thiserror = "2"
 anyhow = "1"
@@ -36,13 +36,13 @@ bytes = "1"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 hickory-resolver = "0.24"
-hmac = "0.12"
+hmac = "0.13"
 url = "2"
 mime = "0.3"
 base64 = "0.22"
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 rsa = "0.9"
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11", features = ["oid"] }
 sha1 = "0.10"
 tokio-stream = "0.1"
 async-stream = "0.3"
